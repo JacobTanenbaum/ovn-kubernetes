@@ -242,7 +242,7 @@ var _ = Describe("Master Operations", func() {
 			err = clusterController.StartClusterMaster("master")
 			Expect(err).NotTo(HaveOccurred())
 
-			err = clusterController.WatchNodes(nil)
+			err = clusterController.WatchNodes()
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -316,7 +316,7 @@ var _ = Describe("Master Operations", func() {
 			err = clusterController.StartClusterMaster("master")
 			Expect(err).NotTo(HaveOccurred())
 
-			err = clusterController.WatchNodes(nil)
+			err = clusterController.WatchNodes()
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -471,7 +471,7 @@ subnet=%s
 			clusterController.UDPLoadBalancerUUID = udpLBUUID
 
 			// Let the real code run and ensure OVN database sync
-			err = clusterController.WatchNodes(nil)
+			err = clusterController.WatchNodes()
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -701,7 +701,7 @@ var _ = Describe("Gateway Init Operations", func() {
 			clusterController.UDPLoadBalancerUUID = udpLBUUID
 
 			// Let the real code run and ensure OVN database sync
-			err = clusterController.WatchNodes(nil)
+			err = clusterController.WatchNodes()
 			Expect(err).NotTo(HaveOccurred())
 
 			_, subnet, err := net.ParseCIDR(nodeSubnet)
@@ -920,7 +920,7 @@ var _ = Describe("Gateway Init Operations", func() {
 			clusterController.UDPLoadBalancerUUID = udpLBUUID
 
 			// Let the real code run and ensure OVN database sync
-			err = clusterController.WatchNodes(nil)
+			err = clusterController.WatchNodes()
 			Expect(err).NotTo(HaveOccurred())
 
 			_, subnet, err := net.ParseCIDR(nodeSubnet)

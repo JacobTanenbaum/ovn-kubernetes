@@ -18,6 +18,7 @@ import (
 	kapi "k8s.io/api/core/v1"
 	kapisnetworking "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -153,13 +154,13 @@ func NewOvnController(kubeClient kubernetes.Interface, wf *factory.WatchFactory,
 }
 
 // Run starts the actual watching.
-func (oc *Controller) Run(nodeSelector *metav1.LabelSelector, stopChan chan struct{}) error {
+func (oc *Controller) Run(stopChan chan struct{}) error {
 	startOvnUpdater()
 
 	// WatchNodes must be started first so that its initial Add will
 	// create all node logical switches, which other watches may depend on.
 	// https://github.com/ovn-org/ovn-kubernetes/pull/859
-	if err := oc.WatchNodes(nodeSelector); err != nil {
+	if err := oc.WatchNodes(); err != nil {
 		return err
 	}
 
@@ -501,13 +502,19 @@ func (oc *Controller) syncNodeGateway(node *kapi.Node, subnet *net.IPNet) error 
 
 // WatchNodes starts the watching of node resource and calls
 // back the appropriate handler logic
-func (oc *Controller) WatchNodes(nodeSelector *metav1.LabelSelector) error {
+func (oc *Controller) WatchNodes() error {
 	var gatewaysFailed sync.Map
 	macAddressFailed := make(map[string]bool)
-	_, err := oc.watchFactory.AddFilteredNodeHandler(nodeSelector, cache.ResourceEventHandlerFuncs{
+	nodeSelector, _ := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+		MatchLabels: map[string]string{kapi.LabelOSStable: "linux"},
+	})
+	_, err := oc.watchFactory.AddNodeHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			node := obj.(*kapi.Node)
 			logrus.Debugf("Added event for Node %q", node.Name)
+			if !nodeSelector.Matches(labels.Set(node.Labels)) {
+				oc.logicalSwitchCache[node.Name] = nil
+			}
 			hostSubnet, err := oc.addNode(node)
 			if err != nil {
 				logrus.Errorf("error creating subnet for node %s: %v", node.Name, err)

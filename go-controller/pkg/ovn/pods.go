@@ -133,6 +133,10 @@ func (oc *Controller) deleteLogicalPort(pod *kapi.Pod) {
 
 	podDesc := pod.Namespace + "/" + pod.Name
 	logrus.Infof("Deleting pod: %s", podDesc)
+	hostSubnet, exists := oc.logicalSwitchCache[pod.Spec.NodeName]
+	if hostSubnet == nil && exists {
+		return
+	}
 	logicalPort := podLogicalPortName(pod)
 	out, stderr, err := util.RunOVNNbctl("--if-exists", "lsp-del",
 		logicalPort)
@@ -176,6 +180,11 @@ func (oc *Controller) waitForNodeLogicalSwitch(nodeName string) (*net.IPNet, err
 	// The node switch will be created when the node's logical network infrastructure
 	// is created by the node watch.
 	var subnet *net.IPNet
+	hostSubnet, exists := oc.logicalSwitchCache[nodeName]
+	if hostSubnet == nil && exists {
+		return nil, nil
+	}
+
 	if err := wait.PollImmediate(10*time.Millisecond, 30*time.Second, func() (bool, error) {
 		oc.lsMutex.Lock()
 		defer oc.lsMutex.Unlock()
