@@ -10,6 +10,7 @@ import (
 
 	kapi "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/util/retry"
 
@@ -630,6 +631,19 @@ func (oc *Controller) addNode(node *kapi.Node) (hostsubnet *net.IPNet, err error
 		}
 		// Node already has subnet assigned; ensure its logical network is set up
 		return hostsubnet, oc.ensureNodeLogicalNetwork(node.Name, hostsubnet)
+	} else {
+		ignored, err := isNodeIgnored(node)
+		if err != nil {
+			return nil, err
+		}
+		if ignored {
+			oc.lsMutex.Lock()
+			defer oc.lsMutex.Unlock()
+			oc.logicalSwitchCache[node.Name] = nil
+			logrus.Debugf("Node %s is ignored by ovn-kubernetes", node.Name)
+			return nil, nil
+		}
+
 	}
 
 	// Node doesn't have a subnet assigned; reserve a new one for it
@@ -816,4 +830,19 @@ func (oc *Controller) syncNodes(nodes []interface{}) {
 			logrus.Error(err)
 		}
 	}
+}
+
+func isNodeIgnored(node *kapi.Node) (bool, error) {
+	if config.Kubernetes.IgnoreNodeLabel != "" {
+		nodeLabelSelector, err := metav1.ParseToLabelSelector(config.Kubernetes.IgnoreNodeLabel)
+		if err != nil {
+			return false, err
+		}
+		nodeSelector, _ := metav1.LabelSelectorAsSelector(nodeLabelSelector)
+		if nodeSelector.Matches(labels.Set(node.Labels)) {
+			return true, nil
+		}
+
+	}
+	return false, nil
 }

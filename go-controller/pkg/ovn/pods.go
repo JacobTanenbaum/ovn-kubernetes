@@ -176,11 +176,14 @@ func (oc *Controller) waitForNodeLogicalSwitch(nodeName string) (*net.IPNet, err
 	// The node switch will be created when the node's logical network infrastructure
 	// is created by the node watch.
 	var subnet *net.IPNet
+	hostSubnet, exists := oc.accessLogicalSwitchCache(nodeName)
+	if hostSubnet == nil && exists {
+		return nil, nil
+	}
+
 	if err := wait.PollImmediate(10*time.Millisecond, 30*time.Second, func() (bool, error) {
-		oc.lsMutex.Lock()
-		defer oc.lsMutex.Unlock()
 		var ok bool
-		subnet, ok = oc.logicalSwitchCache[nodeName]
+		subnet, ok = oc.accessLogicalSwitchCache(nodeName)
 		return ok, nil
 	}); err != nil {
 		return nil, fmt.Errorf("timed out waiting for logical switch %q subnet: %v", nodeName, err)
@@ -340,4 +343,11 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) error {
 	recordPodCreated(pod)
 
 	return nil
+}
+
+func (oc *Controller) accessLogicalSwitchCache(nodeName string) (*net.IPNet, bool) {
+	oc.lsMutex.Lock()
+	defer oc.lsMutex.Unlock()
+	hostSubnet, exists := oc.logicalSwitchCache[nodeName]
+	return hostSubnet, exists
 }

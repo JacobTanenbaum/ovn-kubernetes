@@ -163,6 +163,7 @@ type KubernetesConfig struct {
 	MetricsEnablePprof bool   `gcfg:"metrics-enable-pprof"`
 	OVNEmptyLbEvents   bool   `gcfg:"ovn-empty-lb-events"`
 	PodIP              string `gcfg:"pod-ip"`
+	IgnoreNodeLabel    string `gcfg:"ignore-node-labeled"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -547,6 +548,11 @@ var K8sFlags = []cli.Flag{
 		Name:        "pod-ip",
 		Usage:       "specify the ovnkube pod IP.",
 		Destination: &cliConfig.Kubernetes.PodIP,
+	},
+	cli.StringFlag{
+		Name:        "ignore-node-labeled",
+		Usage:       "specify a label for nodes that will manage there own networking needs",
+		Destination: &cliConfig.Kubernetes.IgnoreNodeLabel,
 	},
 }
 
