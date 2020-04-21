@@ -537,7 +537,6 @@ func getObjectMeta(objType reflect.Type, obj interface{}) (*metav1.ObjectMeta, e
 }
 
 func (wf *WatchFactory) addHandler(objType reflect.Type, namespace string, lsel *metav1.LabelSelector, funcs cache.ResourceEventHandler, processExisting func([]interface{})) (*Handler, error) {
-
 	inf, ok := wf.informers[objType]
 	if !ok {
 		return nil, fmt.Errorf("unknown object type %v", objType)
@@ -643,6 +642,11 @@ func (wf *WatchFactory) AddPolicyHandler(handlerFuncs cache.ResourceEventHandler
 // RemovePolicyHandler removes a NetworkPolicy object event handler function
 func (wf *WatchFactory) RemovePolicyHandler(handler *Handler) error {
 	return wf.removeHandler(policyType, handler)
+}
+
+// AddEgressFirewallHandler adds a handler function that will be executed on EgressFirewall object changes
+func (wf *WatchFactory) AddEgressFirewallHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) (*Handler, error) {
+	return wf.addHandler(egressFirewallType, "", nil, handlerFuncs, processExisting)
 }
 
 // RemoveEgressFirewallHandler removes an EgressFirewall object event handler function
