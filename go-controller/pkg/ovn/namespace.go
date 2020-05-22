@@ -135,7 +135,7 @@ func (oc *Controller) multicastDeleteNamespace(ns *kapi.Namespace, nsInfo *names
 // This function ensures that the namespace wide port group will only be created once and
 // cleaned up when no object that relies on it exists.
 func (nsInfo *namespaceInfo) updateNamespacePortGroup(ns string) error {
-	if nsInfo.multicastEnabled {
+	if nsInfo.multicastEnabled || nsInfo.egressFirewall {
 		if nsInfo.portGroupUUID != "" {
 			// Multicast is enabled and the port group exists so there is nothing to do.
 			return nil

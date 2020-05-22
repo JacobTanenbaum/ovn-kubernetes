@@ -62,11 +62,16 @@ type namespaceInfo struct {
 	// the policy itself.
 	networkPolicies map[string]*namespacePolicy
 
+	//egressFirewall egressFirewallPolicy? KEYWORD
+
 	hybridOverlayExternalGW net.IP
 	hybridOverlayVTEP       net.IP
 
 	// The UUID of the namespace-wide port group that contains all the pods in the namespace.
 	portGroupUUID string
+
+	// Returns true if there is an egressFirewall Associated with this namespace
+	egressFirewall bool
 
 	multicastEnabled bool
 }
