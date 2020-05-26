@@ -22,10 +22,13 @@ they can overlap and the first one that is defined needs to be followed
 
 
 want to use toLport
+
+Since I have to enforce an order if an egressFirewall Object is modified I need to delete and recreate it.
 */
 
 const (
 	//	toLport = "to-lport"
+	//fromLport = "from-lport" -- use this one
 	//default priority to whitelist internal traffic
 	defaultWhitelistPriority = 2000
 )
@@ -47,6 +50,7 @@ type egressFirewallRule struct {
 
 }
 
+// KEYWORD: can use port policy struct from policy.go?
 type port struct {
 	Protocol string //UDP, TCP, SCTP
 	Port     int32
@@ -102,4 +106,15 @@ func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.Egr
 
 	//remove the ranges from the struct...
 	//remove whitelist
+}
+
+// add port group and rule
+func addACLAndRule(portGroupUUID, portGroupName, priority, action string) error {
+	_, stderr, err = util.RunOVNNbctl("--id=@acl", "create", "acl",
+		fmt.Sprintf("priority=%s", priority),
+		fmt.Sprintf("direction=%s", fromLport), match, "action="+action,
+		fmt.Sprintf("external-ids:KEYWORD=%s", test),
+		"--", "add", "port_group", portGroupUUID,
+		"acls", "@acl")
+
 }
