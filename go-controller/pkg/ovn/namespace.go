@@ -53,9 +53,9 @@ func (oc *Controller) addPodToNamespace(ns string, portInfo *lpInfo) error {
 	}
 
 	// If multicast is allowed and enabled for the namespace, add the port
-	// to the allow policy.
+	// to the namespace wide port group.
 	if oc.multicastSupport && nsInfo.multicastEnabled {
-		if err := podAddAllowMulticastPolicy(ns, portInfo); err != nil {
+		if err := addToPortGroup(hashedPortGroup(ns), portInfo); err != nil {
 			return err
 		}
 	}
@@ -75,9 +75,12 @@ func (oc *Controller) deletePodFromNamespace(ns string, portInfo *lpInfo) error 
 		return err
 	}
 
-	// Remove the port from the multicast allow policy.
+	delete(nsInfo.addressSet, address)
+	removeFromAddressSet(hashedAddressSet(ns), address)
+
+	// Remove the port from the namespace wide port group.
 	if oc.multicastSupport && nsInfo.multicastEnabled {
-		if err := podDeleteAllowMulticastPolicy(ns, portInfo); err != nil {
+		if err := deleteFromPortGroup(hashedPortGroup(ns), portInfo); err != nil {
 			return err
 		}
 	}
