@@ -1,6 +1,7 @@
 package ovn
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -83,13 +84,23 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 		nsInfo.egressFirewall = false
 		return
 	}
-
+	priority := defaultWhitelistPriority
 	//whitelist internal traffic
 	// config.Kubernetes.ServiceCIDRS
 	for _, serviceSubnet := range config.Kubernetes.ServiceCIDRs {
 		//whitelist the serviceCIDRs
+		addACLAndRule(nsInfo.portGroupUUID, egressFirewall.Namespace, serviceSubnet.String(), "allow", priority)
+		priority++
 	}
 	//config.Default.ClusterSubnets
+	for _, clusterSubnet := range config.Default.ClusterSubnets {
+		addACLAndRule(nsInfo.portGroupUUID, egressFirewall.Namespace, clusterSubnet.CIDR.String(), "allow", priority)
+		priority++
+	}
+
+	//block all traffic
+	addACLAndRule(nsInfo.portGroupUUID, egressFirewall.Namespace, "0.0.0.0/0", "drop", priority)
+	priority++
 
 }
 
@@ -109,12 +120,21 @@ func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.Egr
 }
 
 // add port group and rule
-func addACLAndRule(portGroupUUID, portGroupName, priority, action string) error {
-	_, stderr, err = util.RunOVNNbctl("--id=@acl", "create", "acl",
-		fmt.Sprintf("priority=%s", priority),
+func addACLAndRule(portGroupUUID, portGroupName, ipCIDR, action string, priority int) error {
+	match := fmt.Sprintf("match=\"ip4.dst == %s && inport == @%s\"", ipCIDR, portGroupUUID)
+
+	_, stderr, err := util.RunOVNNbctl("--id=@acl", "create", "acl",
+		fmt.Sprintf("priority=%d", priority),
 		fmt.Sprintf("direction=%s", fromLport), match, "action="+action,
-		fmt.Sprintf("external-ids:KEYWORD=%s", test),
+		fmt.Sprintf("external-ids:KEYWORD=test"),
 		"--", "add", "port_group", portGroupUUID,
 		"acls", "@acl")
+	if err != nil {
+		klog.Errorf(" error executing create ACL command, stderr: %q, %+v",
+			stderr, err)
+		return err
+	}
+
+	return nil
 
 }
