@@ -57,7 +57,7 @@ func (oc *Controller) addPodToNamespace(ns string, portInfo *lpInfo) error {
 
 	// If multicast is allowed and enabled for the namespace, add the port
 	// to the namespace wide port group.
-	if oc.multicastSupport && nsInfo.multicastEnabled {
+	if (oc.multicastSupport && nsInfo.multicastEnabled) || nsInfo.egressFirewall {
 		if err := addToPortGroup(hashedPortGroup(ns), portInfo); err != nil {
 			return err
 		}
@@ -82,7 +82,7 @@ func (oc *Controller) deletePodFromNamespace(ns string, portInfo *lpInfo) error 
 	removeFromAddressSet(hashedAddressSet(ns), address)
 
 	// Remove the port from the namespace wide port group.
-	if oc.multicastSupport && nsInfo.multicastEnabled {
+	if (oc.multicastSupport && nsInfo.multicastEnabled) || nsInfo.egressFirewall {
 		if err := deleteFromPortGroup(hashedPortGroup(ns), portInfo); err != nil {
 			return err
 		}

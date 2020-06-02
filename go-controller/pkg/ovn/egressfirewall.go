@@ -71,6 +71,14 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 	}
 	defer nsInfo.Unlock() //KEYWORD: do I need to defer or can I Unlock sooner ...
 
+	for _, portName := range nsInfo.addressSet {
+		if portInfo, err := oc.logicalPortCache.get(portName); err != nil {
+			klog.Errorf(err.Error())
+		} else if err := addToPortGroup(hashedPortGroup(egressFirewall.Namespace), portInfo); err != nil {
+			klog.Warningf("failed to add port %s to port group ACL: %v", portName, err)
+		}
+	}
+
 	if nsInfo.egressFirewall {
 		klog.Errorf("Attempting to add egressFirewall %s to namespace %s when it already has an egressFirewall",
 			egressFirewall.Name, egressFirewall.Namespace)
