@@ -56,7 +56,7 @@ type EgressFirewallRule struct {
 type EgressFirewallPort struct {
 	// protocol (TCP, UDP, or SCTP) that the traffic must match. Defaults to TCP
 	// +optional
-	Protocol *v1.Protocol `json:"protocol,omitempty"`
+	Protocol *v1.Protocol `json:"protocol,omitempty,casttype=k8s.io/api/core/v1.Protocol"`
 	// port that the traffic must match
 	PortNum *int32 `json:"port"`
 }
