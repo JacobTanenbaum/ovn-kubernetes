@@ -46,9 +46,9 @@ type egressFirewall struct {
 
 type egressFirewallRule struct {
 	id           int
-	access       string        //ALLOW or DENY
-	ports        []port        //the ports that this rule applies to
-	destinations []destination //either a DNS name or cidr selector
+	access       egressfirewallapi.EgressFirewallRuleType //ALLOW or DENY
+	ports        []*port                                  //the ports that this rule applies to
+	destinations []*destination                           //either a DNS name or cidr selector
 }
 
 // KEYWORD: can use port policy struct from policy.go?
@@ -71,6 +71,17 @@ func newEgressFirewall(egressFirewallPolicy *egressfirewallapi.EgressFirewall) *
 	return ef
 }
 
+func newEgressFirewallRule(rawEgressFirewallRule egressfirewallapi.EgressFirewallRule, id int) *egressFirewallRule {
+	efr := &egressFirewallRule{
+		id:           id,
+		access:       rawEgressFirewallRule.Type,
+		ports:        make([]*port, 0),
+		destinations: make([]*destination, 0),
+	}
+
+	return efr
+}
+
 func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.EgressFirewall) {
 	klog.Infof("Adding egress Firewall %s in namesapce %s", egressFirewall.Name, egressFirewall.Namespace)
 	nsInfo, err := oc.waitForNamespaceLocked(egressFirewall.Namespace)
@@ -86,30 +97,16 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 		return
 	}
 
-	// add the port_group
-	//	nsInfo.egressFirewall = true
-	//	err = nsInfo.updateNamespacePortGroup(egressFirewall.Namespace)
-	//	if err != nil {
-	//		nsInfo.egressFirewall = false
-	//		klog.Errorf("failed to add egressFirewall %s to namespace %s: %v", egressFirewall.Name, egressFirewall.Namespace, err)
-	//		return
-	//	}
+	ef := newEgressFirewall(egressFirewall)
+	nsInfo.egressFirewallPolicy = ef
+	//lock the newgressFirewall and unlock nsInfo
+	for i, egressFirewallRule := range egressFirewall.Spec.Rules {
+		//process Rules into egressFirewallRules for egressFirewall struct
+		newEgressFirewallRule(egressFirewallRule, i)
 
-	//	pods, err := oc.watchFactory.GetPods(egressFirewall.Namespace)
-	//	if err != nil {
-	//		klog.Warning("failed to get pods for namespace %q: %v", egressFirewall.Namespace, err)
-	//	}
-	//	for _, pod := range pods {
-	//		portName := podLogicalPortName(pod)
-	//		if portInfo, err := oc.logicalPortCache.get(portName); err != nil {
-	//			klog.Errorf(err.Error())
-	///		} else if err := addToPortGroup(hashedPortGroup(egressFirewall.Namespace), portInfo); err != nil {
-	//			klog.Warningf("failed to add port %s to port group: %v", portName, err)
-	//		}
-	//	}
+	}
 
-	//getNodes
-	//for proof of concept replace with node watcher
+	// TODO make a function that takes an egressFirewall struct and adds all the ACLs in it...
 	existingNodes, err := oc.kube.GetNodes()
 	if err != nil {
 		klog.Errorf("KEYWORD: UNABLE TO GET NODES")
@@ -179,6 +176,10 @@ func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.Egr
 
 	//remove the ranges from the struct...
 	//remove whitelist
+}
+
+func (ef *egressFirewall) addACLToJoinSwitch() {
+
 }
 
 // add port group and rule
