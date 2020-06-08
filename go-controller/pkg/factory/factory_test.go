@@ -108,10 +108,9 @@ func newEgressFirewall(name, namespace string) *egressfirewall.EgressFirewall {
 			[]egressfirewall.EgressFirewallRule{
 				{
 					Type: egressfirewall.EgressFirewallRuleAllow,
-					To: []egressfirewall.EgressFirewallDestination{
-						{
-							DNSName: "www.example.com",
-						},
+					To: egressfirewall.EgressFirewallDestination{
+
+						DNSName: "www.example.com",
 					},
 				},
 			},
