@@ -66,6 +66,9 @@ type namespaceInfo struct {
 	hybridOverlayExternalGW net.IP
 	hybridOverlayVTEP       net.IP
 
+	// map of next hop gateway IPs to empty struct
+	nextHopGWs map[string]struct{}
+
 	// The UUID of the namespace-wide port group that contains all the pods in the namespace.
 	portGroupUUID string
 
@@ -409,6 +412,7 @@ func (oc *Controller) WatchPods() error {
 		AddFunc: func(obj interface{}) {
 			pod := obj.(*kapi.Pod)
 			if !podWantsNetwork(pod) {
+				//KEYWORD check if adding hostNetwork pod with F5 implictations
 				return
 			}
 
@@ -425,6 +429,7 @@ func (oc *Controller) WatchPods() error {
 		UpdateFunc: func(old, newer interface{}) {
 			pod := newer.(*kapi.Pod)
 			if !podWantsNetwork(pod) {
+				//KEYWORD check if updating hostNetwork pod with F5 implications
 				return
 			}
 

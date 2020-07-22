@@ -17,6 +17,13 @@ import (
 	utilnet "k8s.io/utils/net"
 )
 
+const (
+	// Annotation used to determine if this pod will serve as the routing next hop for this namespace
+	podNextHopAnnotation = "k8s.ovn.org/routing-namespace"
+	// Optional Annotation to specify which network attachment we should get the next hop IP from
+	podNextHopNetworkAnnotation = "k8s.ovn.org/routing-network"
+)
+
 // Builds the logical switch port name for a given pod.
 func podLogicalPortName(pod *kapi.Pod) string {
 	return pod.Namespace + "_" + pod.Name
@@ -106,7 +113,10 @@ func (oc *Controller) deleteLogicalPort(pod *kapi.Pod) {
 	if err := oc.lsManager.ReleaseIPs(portInfo.logicalSwitch, portInfo.ips); err != nil {
 		klog.Errorf(err.Error())
 	}
-
+	err = oc.deleteNextHopGatewayRoute(pod)
+	if err != nil {
+		klog.Errorf(err)
+	}
 	oc.logicalPortCache.remove(logicalPort)
 }
 
@@ -119,6 +129,50 @@ func (oc *Controller) waitForNodeLogicalSwitch(nodeName string) error {
 	}); err != nil {
 		return fmt.Errorf("timed out waiting for logical switch %q subnet: %v", nodeName, err)
 	}
+	return nil
+}
+
+func (oc *Controller) addNextHopGatewayRoute(pod *kapi.Pod) error {
+	nsInfo := oc.getNamespaceLocked(pod.Namespace)
+	if nsInfo == nil {
+		return nil
+	}
+	defer nsInfo.Unlock()
+
+	podIPs, err := util.GetAllPodIPs(pod)
+	if err != nil {
+		return err
+	}
+
+	for _, podIP := range podIPs {
+		for nextHopIP, _ := range nsInfo.nextHopGWs {
+			out, stderr, err := util.RunOVNNbctl("--may-exist", "--ecmp", "--policy=src-ip", "lr-route-add",
+				fmt.Sprintf("GR_%s", pod.Spec.NodeName), podIP.String(), nextHopIP)
+
+			if err != nil {
+				return fmt.Errorf("Error creating nextHop route for pod %s IP address %s "+
+					"stdout: %q, stderr: %q, (%v)",
+					pod.Name, podIP, out, stderr, err)
+
+			}
+		}
+	}
+	return nil
+}
+
+func (oc *Controller) deleteNextHopGatewayRoute(pod *kapi.Pod) error {
+	podIPs, err := util.GetAllPodIPs(pod)
+
+	for _, podIP := range podIPs {
+		out, stderr, err := util.RunOVNNbctl("--if-exists", "lr-route-del", fmt.Sprintf("GR_%s", pod.Spec.NodeName), podIP)
+		if err != nil {
+			return fmt.Errorf("Error deleting nextHop route for pod %s IP address %s "+
+				"stdout: %q, stderr: %q, (%v)",
+				pod.Name, podIP, out, stderr, err)
+		}
+
+	}
+
 	return nil
 }
 
@@ -409,6 +463,11 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) error {
 			podIfAddrs, podMac, podAnnotation.Gateways, marshalledAnnotation)
 		if err = oc.kube.SetAnnotationsOnPod(pod, marshalledAnnotation); err != nil {
 			return fmt.Errorf("failed to set annotation on pod %s: %v", pod.Name, err)
+		}
+
+		err = oc.addNextHopGatewayRoute(pod)
+		if err != nil {
+			return err
 		}
 
 		// observe the pod creation latency metric.

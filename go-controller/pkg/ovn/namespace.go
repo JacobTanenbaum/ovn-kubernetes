@@ -308,6 +308,7 @@ func (oc *Controller) createNamespaceLocked(ns string) *namespaceInfo {
 
 	nsInfo := &namespaceInfo{
 		networkPolicies:  make(map[string]*namespacePolicy),
+		nextHopGWs:       make(map[string]struct{}),
 		multicastEnabled: false,
 	}
 	nsInfo.Lock()
