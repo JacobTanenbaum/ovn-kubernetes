@@ -34,6 +34,9 @@ type NetworkSelectionElement struct {
 	// Namespace contains the optional namespace that the network referenced
 	// by Name exists in
 	Namespace string `json:"namespace,omitempty"`
+	// IPs contains the optional IP addresses that have been assigned to the pod
+	// by the plugin handling this network attachment
+	IPs []net.IP `json:"ips, omitempty"`
 	// MacRequest contains an optional requested MAC address for this
 	// network attachment
 	MacRequest string `json:"mac,omitempty"`

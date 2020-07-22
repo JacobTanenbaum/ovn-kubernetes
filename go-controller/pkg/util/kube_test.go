@@ -390,6 +390,16 @@ func TestGetPodNetSelAnnotation(t *testing.T) {
 			inpNetAnnotation: "k8s.ovn.org/pod-networks",
 			expErr:           true,
 		},
+		{
+			desc: "success",
+			inpPod: v1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"k8s.v1.cni.cncf.io/networks": `[{"name":"test"}]`},
+				},
+			},
+			inpNetAnnotation: "k8s.v1.cni.cncf.io/networks",
+			expErr:           false,
+		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
@@ -397,6 +407,8 @@ func TestGetPodNetSelAnnotation(t *testing.T) {
 			t.Log(res, e)
 			if tc.expErr {
 				assert.Error(t, e)
+			} else {
+				assert.Empty(t, e)
 			}
 			if tc.expOutput != nil {
 				assert.Greater(t, len(res), 0)
