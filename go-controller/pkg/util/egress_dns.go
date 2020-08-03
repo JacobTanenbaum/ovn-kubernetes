@@ -51,7 +51,7 @@ func NewEgressDNS() (*EgressDNS, error) {
 	}, nil
 }
 
-func (e *EgressDNS) Add(policy networkv1.EgressNetworkPolicy) {
+func (e *EgressDNS) Add(policy egressfirewallapi.EgressFirewall) {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 
@@ -72,7 +72,7 @@ func (e *EgressDNS) Add(policy networkv1.EgressNetworkPolicy) {
 	e.namespaces[policy.UID] = policy.Namespace
 }
 
-func (e *EgressDNS) Delete(policy networkv1.EgressNetworkPolicy) {
+func (e *EgressDNS) Delete(policy egressfirewallapi.EgressFirewall) {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 	//delete the entry from the dnsNames to UIDs map for each rule in the policy
