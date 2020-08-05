@@ -188,6 +188,9 @@ type Controller struct {
 	// Cache used for keeping track of EgressIP pod handlers
 	egressIPPodHandlerCache map[string]factory.Handler
 
+	egressFirewallDNS      *util.EgressDNS
+	egressFirewallStopChan <-chan struct{}
+
 	// A cache used for egress IP assignments containing data for all cluster nodes
 	// used for egress IP assignments
 	eIPAllocator map[string]*eNode
@@ -797,6 +800,7 @@ func (oc *Controller) WatchEgressFirewall() (*factory.Handler, error) {
 		},
 		DeleteFunc: func(obj interface{}) {
 			egressFirewall := obj.(*egressfirewall.EgressFirewall)
+			oc.egressFirewallDNS = nil
 			errList := oc.deleteEgressFirewall(egressFirewall)
 			for _, err := range errList {
 				klog.Error(err)
@@ -1001,7 +1005,7 @@ func (oc *Controller) WatchNodes() error {
 					continue
 				}
 				if nsInfo.egressFirewallPolicy != nil {
-					err = nsInfo.egressFirewallPolicy.addACLToJoinSwitch([]string{joinSwitch(node.Name)}, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName())
+					err = oc.addACLToJoinSwitch([]string{joinSwitch(node.Name)}, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName(), nsInfo.egressFirewallPolicy)
 					if err != nil {
 						klog.Errorf("%s", err)
 					}

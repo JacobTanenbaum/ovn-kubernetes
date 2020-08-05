@@ -29,6 +29,11 @@ type EgressDNS struct {
 	// Maintain namespaces for each policy to avoid querying etcd in syncEgressDNSPolicyRules()
 	namespaces map[ktypes.UID]string
 
+	// map of namespace to map of dnsName to ACL information
+	ACLs map[string]map[string]*ACLInformation
+	// map of dnsNames to all namespaces that they appear in
+	DNSInNamespace map[string]map[string]struct{}
+
 	// Report change when Add operation is done
 	added chan bool
 
@@ -46,12 +51,33 @@ func NewEgressDNS() (*EgressDNS, error) {
 		dns:                dnsInfo,
 		dnsNamesToPolicies: map[string]sets.String{},
 		namespaces:         map[ktypes.UID]string{},
-		added:              make(chan bool),
-		Updates:            make(chan EgressDNSUpdates),
+
+		ACLs:           make(map[string]map[string]*ACLInformation),
+		DNSInNamespace: make(map[string]map[string]struct{}),
+
+		added:   make(chan bool),
+		Updates: make(chan EgressDNSUpdates),
 	}, nil
 }
 
-func (e *EgressDNS) Add(policy egressfirewallapi.EgressFirewall) {
+type ACLInformation struct {
+	//dnsName     string
+	ipAddresses      []net.IP
+	priority         int
+	action           string
+	hashedAddressSet string
+}
+
+func newACLInformation(priority int, action, hashedAddressSet string) *ACLInformation {
+	return &ACLInformation{
+		priority:         priority,
+		action:           action,
+		hashedAddressSet: hashedAddressSet,
+	}
+
+}
+
+func (e *EgressDNS) Addold(policy egressfirewallapi.EgressFirewall) {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 
@@ -72,6 +98,45 @@ func (e *EgressDNS) Add(policy egressfirewallapi.EgressFirewall) {
 	e.namespaces[policy.UID] = policy.Namespace
 }
 
+func (e *EgressDNS) Add(namespace, dnsName, action, hashedAddressSet string, priority int) {
+	e.lock.Lock()
+	defer e.lock.Unlock()
+
+	if _, exists := e.DNSInNamespace[dnsName]; !exists {
+		e.DNSInNamespace[dnsName] = make(map[string]struct{})
+		e.DNSInNamespace[dnsName][namespace] = struct{}{}
+		//only call Add if the dnsName doesn't exist in DNSInNamespace
+		if err := e.dns.Add(dnsName); err != nil {
+			utilruntime.HandleError(err)
+		}
+		e.signalAdded()
+	} else {
+		e.DNSInNamespace[dnsName][namespace] = struct{}{}
+
+	}
+	if e.ACLs[namespace] == nil {
+		e.ACLs[namespace] = make(map[string]*ACLInformation)
+	}
+	e.ACLs[namespace][dnsName] = newACLInformation(priority, action, hashedAddressSet)
+	e.ACLs[namespace][dnsName].ipAddresses = e.GetIPs(dnsName)
+
+}
+
+/*
+func (e *EgressDNS) Add(dnsName, namespace string, policyUID ktypes.UID) {
+	if uids, exists := e.dnsNamesToPolicies[dnsName]; !exists {
+		e.dnsNamesToPolicies[dnsName] = sets.NewString(string(policyUID))
+		if err := e.dns.Add(dnsName); err != nil {
+			utilruntime.HandleError(err)
+		}
+		e.signalAdded()
+	} else {
+		e.dnsNamesToPolicies[dnsName] = uids.Insert(string(policyUID))
+	}
+	e.namespaces[policyUID] = namespace
+
+}
+*/
 func (e *EgressDNS) Delete(policy egressfirewallapi.EgressFirewall) {
 	e.lock.Lock()
 	defer e.lock.Unlock()
@@ -105,17 +170,22 @@ func (e *EgressDNS) Update(dns string) (bool, error) {
 }
 
 func (e *EgressDNS) Sync() {
+	klog.Errorf("KEYWORD - HERE RIGHT NOW")
 	var duration time.Duration
 	for {
 		tm, dnsName, updates, ok := e.GetNextQueryTime()
 		if !ok {
+			klog.Errorf("KEYWORD - IN 30")
 			duration = 30 * time.Minute
 		} else {
+			klog.Errorf("KEYWORD - DOING SOMETHING")
 			now := time.Now()
 			if tm.After(now) {
+				klog.Errorf("KEYWORD - SOME DURATION")
 				// Item needs to wait for this duration before it can be processed
 				duration = tm.Sub(now)
 			} else {
+				klog.Errorf("KEYWORD - RIGHT NOW")
 				changed, err := e.Update(dnsName)
 				if err != nil {
 					utilruntime.HandleError(err)
@@ -137,21 +207,28 @@ func (e *EgressDNS) Sync() {
 }
 
 func (e *EgressDNS) GetNextQueryTime() (time.Time, string, []EgressDNSUpdate, bool) {
+	klog.Errorf("KEYWORD - IN NEXTQUERYTIME()")
 	e.lock.Lock()
 	defer e.lock.Unlock()
 	policyUpdates := make([]EgressDNSUpdate, 0)
 	tm, dnsName, timeSet := e.dns.GetNextQueryTime()
 	if !timeSet {
+		klog.Errorf("KEYWORD - RETURNING WITHOUT TIMESET")
 		return tm, dnsName, nil, timeSet
 	}
+	/*
+		if uids, exists := e.dnsNamesToPolicies[dnsName]; exists {
+			for uid := range uids {
+				policyUpdates = append(policyUpdates, EgressDNSUpdate{ktypes.UID(uid), e.namespaces[ktypes.UID(uid)]})
+			}
+	*/
+	if namespaces, exists := e.DNSInNamespace[dnsName]; exists {
 
-	if uids, exists := e.dnsNamesToPolicies[dnsName]; exists {
-		for uid := range uids {
-			policyUpdates = append(policyUpdates, EgressDNSUpdate{ktypes.UID(uid), e.namespaces[ktypes.UID(uid)]})
-		}
+		klog.Errorf("KEYWORD DOING THE THING - %s", namespaces)
 	} else {
 		klog.V(5).Infof("Didn't find any entry for dns name: %s in the dns map.", dnsName)
 	}
+	klog.Errorf("KEYWORD Releaseing LOCK GETNEXTQUERYTIME()")
 	return tm, dnsName, policyUpdates, timeSet
 }
 

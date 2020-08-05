@@ -9,6 +9,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	kapi "k8s.io/api/core/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	utilwait "k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog"
 	utilnet "k8s.io/utils/net"
@@ -23,6 +25,7 @@ const (
 
 type egressFirewall struct {
 	name        string
+	uid         ktypes.UID
 	namespace   string
 	egressRules []*egressFirewallRule
 }
@@ -36,12 +39,14 @@ type egressFirewallRule struct {
 
 type destination struct {
 	cidrSelector string
+	dnsName      string
 }
 
 func newEgressFirewall(egressFirewallPolicy *egressfirewallapi.EgressFirewall) *egressFirewall {
 	ef := &egressFirewall{
 		name:        egressFirewallPolicy.Name,
 		namespace:   egressFirewallPolicy.Namespace,
+		uid:         egressFirewallPolicy.UID,
 		egressRules: make([]*egressFirewallRule, 0),
 	}
 	return ef
@@ -53,12 +58,16 @@ func newEgressFirewallRule(rawEgressFirewallRule egressfirewallapi.EgressFirewal
 		access: rawEgressFirewallRule.Type,
 	}
 
-	_, _, err := net.ParseCIDR(rawEgressFirewallRule.To.CIDRSelector)
-	if err != nil {
-		return nil, err
-	}
-	efr.to.cidrSelector = rawEgressFirewallRule.To.CIDRSelector
+	if rawEgressFirewallRule.To.DNSName != "" {
+		efr.to.dnsName = rawEgressFirewallRule.To.DNSName
+	} else {
 
+		_, _, err := net.ParseCIDR(rawEgressFirewallRule.To.CIDRSelector)
+		if err != nil {
+			return nil, err
+		}
+		efr.to.cidrSelector = rawEgressFirewallRule.To.CIDRSelector
+	}
 	efr.ports = rawEgressFirewallRule.Ports
 
 	return efr, nil
@@ -104,7 +113,7 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 	for _, node := range existingNodes.Items {
 		joinSwitches = append(joinSwitches, joinSwitch(node.Name))
 	}
-	err = ef.addACLToJoinSwitch(joinSwitches, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName())
+	err = oc.addACLToJoinSwitch(joinSwitches, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName(), ef)
 	if err != nil {
 		errList = append(errList, err)
 	}
@@ -170,7 +179,9 @@ func (oc *Controller) updateEgressFirewallWithRetry(egressfirewall *egressfirewa
 	})
 }
 
-func (ef *egressFirewall) addACLToJoinSwitch(joinSwitches []string, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string) error {
+//func (ef *egressFirewall) addACLToJoinSwitch(joinSwitches []string, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string) error {
+func (oc *Controller) addACLToJoinSwitch(joinSwitches []string, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string, ef *egressFirewall) error {
+	usesDNS := false
 	for _, rule := range ef.egressRules {
 		var match string
 		var action string
@@ -180,45 +191,66 @@ func (ef *egressFirewall) addACLToJoinSwitch(joinSwitches []string, hashedAddres
 			action = "drop"
 		}
 
-		ipAddress, _, err := net.ParseCIDR(rule.to.cidrSelector)
-		if err != nil {
-			return fmt.Errorf("error rule.to.cidrSelector %s is not a valid CIDR (%+v)", rule.to.cidrSelector, err)
-		}
-		if !utilnet.IsIPv6(ipAddress) {
-			match = fmt.Sprintf("match=\"ip4.dst == %s && ip4.src == $%s\"", rule.to.cidrSelector, hashedAddressSetNameIPv4)
-		} else {
-			match = fmt.Sprintf("match=\"ip6.dst == %s && ip6.src == $%s\"", rule.to.cidrSelector, hashedAddressSetNameIPv6)
-		}
-
-		if len(rule.ports) > 0 {
-			match = fmt.Sprintf("%s && ( %s )\"", match[:len(match)-1], egressGetL4Match(rule.ports))
-		}
-		uuid, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
-			"--columns=_uuid", "find", "ACL", match, "action="+action,
-			fmt.Sprintf("external-ids:egressFirewall=%s", ef.namespace))
-
-		if err != nil {
-			return fmt.Errorf("error executing find ACL command, stderr: %q, %+v", stderr, err)
-		}
-		for _, joinSwitch := range joinSwitches {
-			if uuid == "" {
-				_, stderr, err := util.RunOVNNbctl("--id=@acl", "create", "acl",
-					fmt.Sprintf("priority=%d", defaultStartPriority-rule.id),
-					fmt.Sprintf("direction=%s", fromLport), match, "action="+action,
-					fmt.Sprintf("external-ids:egressFirewall=%s", ef.namespace),
-					"--", "add", "logical_switch", joinSwitch,
-					"acls", "@acl")
-				if err != nil {
-					return fmt.Errorf("error executing create ACL command, stderr: %q, %+v", stderr, err)
-				}
+		if rule.to.cidrSelector != "" {
+			ipAddress, _, err := net.ParseCIDR(rule.to.cidrSelector)
+			if err != nil {
+				return fmt.Errorf("error rule.to.cidrSelector %s is not a valid CIDR (%+v)", rule.to.cidrSelector, err)
+			}
+			if !utilnet.IsIPv6(ipAddress) {
+				match = fmt.Sprintf("match=\"ip4.dst == %s && ip4.src == $%s\"", rule.to.cidrSelector, hashedAddressSetNameIPv4)
 			} else {
-				_, stderr, err := util.RunOVNNbctl("add", "logical_switch", joinSwitch, "acls", uuid)
-				if err != nil {
-					return fmt.Errorf("error adding ACL to joinsSwitch %s failed, stderr: %q, %+v", joinSwitch, stderr, err)
+				match = fmt.Sprintf("match=\"ip6.dst == %s && ip6.src == $%s\"", rule.to.cidrSelector, hashedAddressSetNameIPv6)
+			}
 
+			if len(rule.ports) > 0 {
+				match = fmt.Sprintf("%s && ( %s )\"", match[:len(match)-1], egressGetL4Match(rule.ports))
+			}
+			uuid, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
+				"--columns=_uuid", "find", "ACL", match, "action="+action,
+				fmt.Sprintf("external-ids:egressFirewall=%s", ef.namespace))
+
+			if err != nil {
+				return fmt.Errorf("error executing find ACL command, stderr: %q, %+v", stderr, err)
+			}
+			for _, joinSwitch := range joinSwitches {
+				if uuid == "" {
+					_, stderr, err := util.RunOVNNbctl("--id=@acl", "create", "acl",
+						fmt.Sprintf("priority=%d", defaultStartPriority-rule.id),
+						fmt.Sprintf("direction=%s", fromLport), match, "action="+action,
+						fmt.Sprintf("external-ids:egressFirewall=%s", ef.namespace),
+						"--", "add", "logical_switch", joinSwitch,
+						"acls", "@acl")
+					if err != nil {
+						return fmt.Errorf("error executing create ACL command, stderr: %q, %+v", stderr, err)
+					}
+				} else {
+					_, stderr, err := util.RunOVNNbctl("add", "logical_switch", joinSwitch, "acls", uuid)
+					if err != nil {
+						return fmt.Errorf("error adding ACL to joinsSwitch %s failed, stderr: %q, %+v", joinSwitch, stderr, err)
+
+					}
 				}
 			}
+		} else {
+			// rule based on DNS NAME
+			if oc.egressFirewallDNS == nil {
+				klog.Errorf("KEYWORD - Here to spawn the EgressFirewallDNS stuff")
+				var err error
+				oc.egressFirewallDNS, err = util.NewEgressDNS()
+				if err != nil {
+					return err
+				}
+				oc.egressFirewallStopChan = make(chan struct{})
+				go utilwait.Until(oc.egressFirewallDNS.Sync, 0, oc.egressFirewallStopChan)
+				klog.Errorf("KEYWORD - DO A THING AFTER THE SYNC FUNCTION")
+			}
+			oc.egressFirewallDNS.Add(ef.namespace, rule.to.dnsName, action, hashedAddressSetNameIPv4, defaultStartPriority-rule.id)
+			klog.Errorf("KEYWORD - dns records for %s - %s", rule.to.dnsName, oc.egressFirewallDNS.GetIPs(rule.to.dnsName))
+			usesDNS = true
 		}
+	}
+	if usesDNS {
+		klog.Errorf("KEYWORD - AWW YEAHHHHH")
 	}
 	return nil
 }
