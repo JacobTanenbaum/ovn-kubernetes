@@ -63,14 +63,14 @@ var _ = Describe("OVN EgressFirewall Operations", func() {
 	})
 
 	Context("on startup", func() {
-		It("reconciles an existing egressFirewall", func() {
+		It("reconciles an existing egressFirewall with IPv4 CIDR", func() {
 			app.Action = func(ctx *cli.Context) error {
 				const (
 					node1Name string = "node1"
 				)
 				fExec.AddFakeCmdsNoOutputNoError([]string{
-					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=allow external-ids:egressFirewall=namespace1",
-					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
+					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=allow external-ids:egressFirewall=namespace1",
+					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
 				})
 
 				namespace1 := *newNamespace("namespace1")
@@ -119,6 +119,63 @@ var _ = Describe("OVN EgressFirewall Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 		})
+		It("reconciles an existing egressFirewall with IPv6 CIDR", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					node1Name string = "node1"
+				)
+				fExec.AddFakeCmdsNoOutputNoError([]string{
+					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src == $a10481620741176717680) && (ip6.dst == 2002::1234:abcd:ffff:c0a8:101/64)\" action=allow external-ids:egressFirewall=namespace1",
+					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"(ip4.src == $a10481622940199974102 || ip6.src == $a10481620741176717680) && (ip6.dst == 2002::1234:abcd:ffff:c0a8:101/64)\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
+				})
+
+				namespace1 := *newNamespace("namespace1")
+				egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							CIDRSelector: "2002::1234:abcd:ffff:c0a8:101/64",
+						},
+					},
+				})
+
+				fakeOVN.fakeEgressClient = egressfirewallfake.NewSimpleClientset([]runtime.Object{
+					&egressfirewallapi.EgressFirewallList{
+						Items: []egressfirewallapi.EgressFirewall{
+							*egressFirewall,
+						},
+					},
+				}...)
+				fakeOVN.start(ctx, &v1.NamespaceList{
+					Items: []v1.Namespace{
+						namespace1,
+					},
+				}, &v1.NodeList{
+					Items: []v1.Node{
+						{
+							Status: v1.NodeStatus{
+								Phase: v1.NodeRunning,
+							},
+							ObjectMeta: newObjectMeta(node1Name, ""),
+						},
+					},
+				})
+				config.IPv6Mode = true
+				fakeOVN.controller.WatchNamespaces()
+				fakeOVN.controller.WatchEgressFirewall()
+
+				_, err := fakeOVN.fakeEgressClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				Eventually(fExec.CalledMatchesExpected).Should(BeTrue(), fExec.ErrorDesc)
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+
+		})
 	})
 	Context("during execution", func() {
 		It("correctly creates an egressfirewall denying traffic all udp traffic", func() {
@@ -127,8 +184,8 @@ var _ = Describe("OVN EgressFirewall Operations", func() {
 					node1Name string = "node1"
 				)
 				fExec.AddFakeCmdsNoOutputNoError([]string{
-					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102 && ( (udp) )\" action=drop external-ids:egressFirewall=namespace1",
-					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102 && ( (udp) )\" action=drop external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
+					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23) && ( (udp) )\" action=drop external-ids:egressFirewall=namespace1",
+					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23) && ( (udp) )\" action=drop external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
 				})
 				namespace1 := *newNamespace("namespace1")
 				egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
@@ -184,10 +241,10 @@ var _ = Describe("OVN EgressFirewall Operations", func() {
 					node1Name string = "node1"
 				)
 				fExec.AddFakeCmdsNoOutputNoError([]string{
-					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"ip4.dst == 1.2.3.5/23 && " +
-						"ip4.src == $a10481622940199974102 && ( (udp && ( udp.dst == 100 )) || (tcp) )\" action=allow external-ids:egressFirewall=namespace1",
-					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"ip4.dst == 1.2.3.5/23 && " +
-						"ip4.src == $a10481622940199974102 && ( (udp && ( udp.dst == 100 )) || (tcp) )\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
+					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && " +
+						"(ip4.dst == 1.2.3.5/23) && ( (udp && ( udp.dst == 100 )) || (tcp) )\" action=allow external-ids:egressFirewall=namespace1",
+					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && " +
+						"(ip4.dst == 1.2.3.5/23) && ( (udp && ( udp.dst == 100 )) || (tcp) )\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
 					fmt.Sprintf("ovn-nbctl --timeout=15 remove logical_switch join_node1 acls %s", fakeUUID),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -255,11 +312,11 @@ var _ = Describe("OVN EgressFirewall Operations", func() {
 					node1Name string = "node1"
 				)
 				fExec.AddFakeCmdsNoOutputNoError([]string{
-					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=allow external-ids:egressFirewall=namespace1",
-					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
+					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=allow external-ids:egressFirewall=namespace1",
+					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
 					fmt.Sprintf("ovn-nbctl --timeout=15 remove logical_switch join_node1 acls %s", fakeUUID),
-					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=drop external-ids:egressFirewall=namespace1",
-					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=drop external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
+					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=drop external-ids:egressFirewall=namespace1",
+					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=drop external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL external-ids:egressFirewall=namespace1",
@@ -352,13 +409,13 @@ var _ = Describe("OVN EgressFirewall Operations", func() {
 
 				fExec.AddFakeCmdsNoOutputNoError([]string{
 					//adding the original egressFirewall
-					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=allow external-ids:egressFirewall=namespace1",
-					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
+					"ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=allow external-ids:egressFirewall=namespace1",
+					"ovn-nbctl --timeout=15 --id=@acl create acl priority=2000 direction=from-lport match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=allow external-ids:egressFirewall=namespace1 -- add logical_switch join_node1 acls @acl",
 					"ovn-nbctl --timeout=15 add logical_switch join_newNode acls " + fakeUUID,
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					//query ovn and get the UUID of the original ACL
-					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"ip4.dst == 1.2.3.4/23 && ip4.src == $a10481622940199974102\" action=allow external-ids:egressFirewall=namespace1",
+					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find ACL match=\"(ip4.src == $a10481622940199974102 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/23)\" action=allow external-ids:egressFirewall=namespace1",
 					Output: fakeUUID,
 				})
 
@@ -508,6 +565,114 @@ var _ = Describe("OVN test basic functions", func() {
 		for _, test := range testcases {
 			l4Match := egressGetL4Match(test.ports)
 			Expect(test.expectedMatch).To(Equal(l4Match))
+		}
+	})
+	It("computes correct match function", func() {
+		type testcase struct {
+			ipv4source   string
+			ipv6source   string
+			destinations []matchTarget
+			ports        []egressfirewallapi.EgressFirewallPort
+			output       string
+		}
+		testcases := []testcase{
+			{
+				ipv4source:   "testv4",
+				ipv6source:   "",
+				destinations: []matchTarget{{matchKindV4CIDR, "1.2.3.4/32"}},
+				ports:        nil,
+				output:       "match=\"(ip4.src == $testv4 || ip6.src != ::/0) && (ip4.dst == 1.2.3.4/32)\"",
+			},
+			{
+				ipv4source:   "testv4",
+				ipv6source:   "testv6",
+				destinations: []matchTarget{{matchKindV4CIDR, "1.2.3.4/32"}},
+				ports:        nil,
+				output:       "match=\"(ip4.src == $testv4 || ip6.src == $testv6) && (ip4.dst == 1.2.3.4/32)\"",
+			},
+			{
+				ipv4source:   "testv4",
+				ipv6source:   "testv6",
+				destinations: []matchTarget{{matchKindV4AddressSet, "destv4"}, {matchKindV6AddressSet, "destv6"}},
+				ports:        nil,
+				output:       "match=\"(ip4.src == $testv4 || ip6.src == $testv6) && (ip4.dst == $destv4 || ip6.dst == $destv6)\"",
+			},
+			{
+				ipv4source:   "testv4",
+				ipv6source:   "",
+				destinations: []matchTarget{{matchKindV4AddressSet, "destv4"}, {matchKindV6AddressSet, ""}},
+				ports:        nil,
+				output:       "match=\"(ip4.src == $testv4 || ip6.src != ::/0) && (ip4.dst == $destv4)\"",
+			},
+			{
+				ipv4source:   "testv4",
+				ipv6source:   "testv6",
+				destinations: []matchTarget{{matchKindV6CIDR, "2001::/64"}},
+				ports:        nil,
+				output:       "match=\"(ip4.src == $testv4 || ip6.src == $testv6) && (ip6.dst == 2001::/64)\"",
+			},
+		}
+
+		for _, tc := range testcases {
+			matchExpression := generateMatch(tc.ipv4source, tc.ipv6source, tc.destinations, tc.ports)
+			Expect(tc.output).To(Equal(matchExpression))
+		}
+	})
+	It("correctly parses egressFirewallRules", func() {
+		type testcase struct {
+			egressFirewallRule egressfirewallapi.EgressFirewallRule
+			id                 int
+			err                bool
+			errOutput          string
+			output             egressFirewallRule
+		}
+		testcases := []testcase{
+			{
+				egressFirewallRule: egressfirewallapi.EgressFirewallRule{
+					Type: egressfirewallapi.EgressFirewallRuleAllow,
+					To:   egressfirewallapi.EgressFirewallDestination{CIDRSelector: "1.2.3.4/32"},
+				},
+				id:  1,
+				err: false,
+				output: egressFirewallRule{
+					id:     1,
+					access: egressfirewallapi.EgressFirewallRuleAllow,
+					to:     destination{cidrSelector: "1.2.3.4/32"},
+				},
+			},
+			{
+				egressFirewallRule: egressfirewallapi.EgressFirewallRule{
+					Type: egressfirewallapi.EgressFirewallRuleAllow,
+					To:   egressfirewallapi.EgressFirewallDestination{CIDRSelector: "1.2.3./32"},
+				},
+				id:        1,
+				err:       true,
+				errOutput: "invalid CIDR address: 1.2.3./32",
+				output:    egressFirewallRule{},
+			},
+			{
+				egressFirewallRule: egressfirewallapi.EgressFirewallRule{
+					Type: egressfirewallapi.EgressFirewallRuleAllow,
+					To:   egressfirewallapi.EgressFirewallDestination{CIDRSelector: "2002::1234:abcd:ffff:c0a8:101/64"},
+				},
+				id:  2,
+				err: false,
+				output: egressFirewallRule{
+					id:     2,
+					access: egressfirewallapi.EgressFirewallRuleAllow,
+					to:     destination{cidrSelector: "2002::1234:abcd:ffff:c0a8:101/64"},
+				},
+			},
+		}
+		for _, tc := range testcases {
+			output, err := newEgressFirewallRule(tc.egressFirewallRule, tc.id)
+			if tc.err == true {
+				Expect(err).To(HaveOccurred())
+				Expect(tc.errOutput).To(Equal(err.Error()))
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tc.output).To(Equal(*output))
+			}
 		}
 	})
 })

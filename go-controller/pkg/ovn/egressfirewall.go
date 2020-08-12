@@ -167,57 +167,134 @@ func (oc *Controller) updateEgressFirewallWithRetry(egressfirewall *egressfirewa
 
 func (ef *egressFirewall) addACLToJoinSwitch(joinSwitches []string, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string) error {
 	for _, rule := range ef.egressRules {
-		var match string
 		var action string
+		var match string
 		if rule.access == egressfirewallapi.EgressFirewallRuleAllow {
 			action = "allow"
 		} else {
 			action = "drop"
 		}
-
-		ipAddress, _, err := net.ParseCIDR(rule.to.cidrSelector)
+		ip, _, err := net.ParseCIDR(rule.to.cidrSelector)
 		if err != nil {
-			return fmt.Errorf("error rule.to.cidrSelector %s is not a valid CIDR (%+v)", rule.to.cidrSelector, err)
+			// should not happen because this value is already validated
+			return fmt.Errorf("cannot add ACL %s is not a valid CIDR", rule.to.cidrSelector)
 		}
-		if !utilnet.IsIPv6(ipAddress) {
-			match = fmt.Sprintf("match=\"ip4.dst == %s && ip4.src == $%s\"", rule.to.cidrSelector, hashedAddressSetNameIPv4)
+		if utilnet.IsIPv6(ip) {
+			match, err = generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, []matchTarget{matchTarget{matchKindV6CIDR, rule.to.cidrSelector}}, rule.ports)
 		} else {
-			match = fmt.Sprintf("match=\"ip6.dst == %s && ip6.src == $%s\"", rule.to.cidrSelector, hashedAddressSetNameIPv6)
+			match, err = generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, []matchTarget{matchTarget{matchKindV4CIDR, rule.to.cidrSelector}}, rule.ports)
 		}
-
-		if len(rule.ports) > 0 {
-			match = fmt.Sprintf("%s && ( %s )\"", match[:len(match)-1], egressGetL4Match(rule.ports))
-		}
-		uuid, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
-			"--columns=_uuid", "find", "ACL", match, "action="+action,
-			fmt.Sprintf("external-ids:egressFirewall=%s", ef.namespace))
-
-		if err != nil {
-			return fmt.Errorf("error executing find ACL command, stderr: %q, %+v", stderr, err)
-		}
+		match := generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, matchTargets, rule.ports)
 		for _, joinSwitch := range joinSwitches {
-			if uuid == "" {
-				_, stderr, err := util.RunOVNNbctl("--id=@acl", "create", "acl",
-					fmt.Sprintf("priority=%d", defaultStartPriority-rule.id),
-					fmt.Sprintf("direction=%s", fromLport), match, "action="+action,
-					fmt.Sprintf("external-ids:egressFirewall=%s", ef.namespace),
-					"--", "add", "logical_switch", joinSwitch,
-					"acls", "@acl")
-				if err != nil {
-					return fmt.Errorf("error executing create ACL command, stderr: %q, %+v", stderr, err)
-				}
-			} else {
-				_, stderr, err := util.RunOVNNbctl("add", "logical_switch", joinSwitch, "acls", uuid)
-				if err != nil {
-					return fmt.Errorf("error adding ACL to joinsSwitch %s failed, stderr: %q, %+v", joinSwitch, stderr, err)
-
-				}
+			err = createACLRule(defaultStartPriority-rule.id, match, action, ef.namespace, joinSwitch)
+			if err != nil {
+				return err
 			}
 		}
 	}
 	return nil
 }
 
+func createACLRule(priority int, match, action, namespace, joinSwitch string) error {
+	uuid, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
+		"--columns=_uuid", "find", "ACL", match, "action="+action,
+		fmt.Sprintf("external-ids:egressFirewall=%s", namespace))
+
+	if err != nil {
+		return fmt.Errorf("error executing find ACL command, stderr: %q, %+v", stderr, err)
+	}
+	if uuid == "" {
+		_, stderr, err := util.RunOVNNbctl("--id=@acl", "create", "acl",
+			fmt.Sprintf("priority=%d", priority),
+			fmt.Sprintf("direction=%s", fromLport),
+			match, "action="+action,
+			fmt.Sprintf("external-ids:egressFirewall=%s", namespace),
+			"--", "add", "logical_switch", joinSwitch,
+			"acls", "@acl")
+		if err != nil {
+			return fmt.Errorf("error adding ACL to joinsSwitch %s failed, stderr: %q, %+v", joinSwitch, stderr, err)
+		}
+	} else {
+		_, stderr, err := util.RunOVNNbctl("add", "logical_switch", joinSwitch, "acls", uuid)
+		if err != nil {
+			return fmt.Errorf("error adding ACL to joinsSwitch %s failed, stderr: %q, %+v", joinSwitch, stderr, err)
+
+		}
+	}
+	return nil
+}
+
+type matchTarget struct {
+	kind  matchKind
+	value string
+}
+
+type matchKind int
+
+const (
+	matchKindV4CIDR matchKind = iota
+	matchKindV6CIDR
+	matchKindV4AddressSet
+	matchKindV6AddressSet
+)
+
+func (m *matchTarget) toExpr() string {
+	switch m.kind {
+	case matchKindV4CIDR:
+		return fmt.Sprintf("ip4.dst == %s || ", m.value)
+	case matchKindV6CIDR:
+		return fmt.Sprintf("ip6.dst == %s || ", m.value)
+	case matchKindV4AddressSet:
+		if m.value != "" {
+			return fmt.Sprintf("ip4.dst == $%s || ", m.value)
+		}
+		return ""
+	case matchKindV6AddressSet:
+		if m.value != "" {
+			return fmt.Sprintf("ip6.dst == $%s || ", m.value)
+		}
+		return ""
+	}
+	panic("invalid matchKind")
+}
+
+// generateMatch generates the "match" section of ACL generation for egressFirewallRules.
+// It is referentially transparent as all the elements have been validated before this function is called
+// sample output:
+// match=\"(ip4.src == $ipv4AddressSetHash || ip6.src == $ipv6AddressSetHash) && (ip6.dst == 2001::/64)\"
+func generateMatch(ipv4Source, ipv6Source string, destinations []matchTarget, ports []egressfirewallapi.EgressFirewallPort) string {
+	var src string
+	var dst string
+	if ipv4Source == "" {
+		src = "ip4.src != 0.0.0.0/0"
+	} else {
+		src = fmt.Sprintf("ip4.src == $%s", ipv4Source)
+	}
+	if ipv6Source == "" {
+		src = fmt.Sprintf("%s || ip6.src != ::/0", src)
+	} else {
+		src = fmt.Sprintf("%s || ip6.src == $%s", src, ipv6Source)
+	}
+
+	for _, entry := range destinations {
+		dst = fmt.Sprintf("%s%s", dst, entry.toExpr())
+	}
+
+	// remove the last 4 characters from dst because I always append " || " and the last entry does not need it
+	match := fmt.Sprintf("match=\"(%s) && (%s)\"", src, dst[:len(dst)-4])
+
+	if len(ports) > 0 {
+		// remove the last character of match because that is the ending " character
+		match = fmt.Sprintf("%s && ( %s )\"", match[:len(match)-1], egressGetL4Match(ports))
+	}
+
+	return match
+}
+
+// egressGetL4Match generates the rules for when ports are specified in an egressFirewall Rule
+// since the ports can be specified in any order in an egressFirewallRule the best way to build up
+// a single rule is to build up each protocol as you walk through the list and place the appropriate logic
+// between the elements.
 func egressGetL4Match(ports []egressfirewallapi.EgressFirewallPort) string {
 	var udpString string
 	var tcpString string
