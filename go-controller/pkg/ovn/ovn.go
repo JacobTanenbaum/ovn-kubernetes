@@ -38,8 +38,9 @@ import (
 )
 
 const (
-	egressfirewallCRD    string = "egressfirewalls.k8s.ovn.org"
-	clusterPortGroupName string = "clusterPortGroup"
+	egressfirewallCRD                string        = "egressfirewalls.k8s.ovn.org"
+	clusterPortGroupName             string        = "clusterPortGroup"
+	egressFirewallDNSDefaultDuration time.Duration = 30 * time.Minute
 )
 
 // ServiceVIPKey is used for looking up service namespace information for a
@@ -165,6 +166,8 @@ type Controller struct {
 
 	// Controller used for programming OVN for egress IP
 	eIPC egressIPController
+
+	egressFirewallDNS *EgressDNS
 
 	// Map of load balancers to service namespace
 	serviceVIPToName map[ServiceVIPKey]types.NamespacedName
@@ -662,6 +665,11 @@ func (oc *Controller) WatchCRD() {
 				}
 				oc.egressFirewallHandler = oc.WatchEgressFirewall()
 
+				oc.egressFirewallDNS, err = NewEgressDNS(oc.addressSetFactory, oc.stopChan)
+				oc.egressFirewallDNS.Run(oc.egressFirewallDNS.stopChan, egressFirewallDNSDefaultDuration)
+				if err != nil {
+					klog.Errorf("Error Creating EgressFirewallDNS: %v", err)
+				}
 			}
 		},
 		UpdateFunc: func(old, newer interface{}) {
@@ -670,6 +678,7 @@ func (oc *Controller) WatchCRD() {
 			crd := obj.(*apiextension.CustomResourceDefinition)
 			klog.Infof("Deleting CRD %s from cluster", crd.Name)
 			if crd.Name == egressfirewallCRD {
+				close(oc.egressFirewallDNS.stopChan)
 				oc.watchFactory.RemoveEgressFirewallHandler(oc.egressFirewallHandler)
 				oc.egressFirewallHandler = nil
 				oc.watchFactory.ShutdownEgressFirewallWatchFactory()

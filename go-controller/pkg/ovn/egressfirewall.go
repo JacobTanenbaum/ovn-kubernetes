@@ -38,6 +38,7 @@ type egressFirewallRule struct {
 
 type destination struct {
 	cidrSelector string
+	dnsName      string
 }
 
 func newEgressFirewall(egressFirewallPolicy *egressfirewallapi.EgressFirewall) *egressFirewall {
@@ -55,13 +56,21 @@ func newEgressFirewallRule(rawEgressFirewallRule egressfirewallapi.EgressFirewal
 		access: rawEgressFirewallRule.Type,
 	}
 
-	_, _, err := net.ParseCIDR(rawEgressFirewallRule.To.CIDRSelector)
-	if err != nil {
-		return nil, err
-	}
-	efr.to.cidrSelector = rawEgressFirewallRule.To.CIDRSelector
+	if rawEgressFirewallRule.To.DNSName != "" {
+		efr.to.dnsName = rawEgressFirewallRule.To.DNSName
+	} else {
 
+		_, _, err := net.ParseCIDR(rawEgressFirewallRule.To.CIDRSelector)
+		if err != nil {
+			return nil, err
+		}
+		efr.to.cidrSelector = rawEgressFirewallRule.To.CIDRSelector
+	}
 	efr.ports = rawEgressFirewallRule.Ports
+
+	if efr.access == egressfirewallapi.EgressFirewallRuleDeny && len(efr.to.dnsName) != 0 {
+		return nil, fmt.Errorf("DNSName is not allowed in deny rules")
+	}
 
 	return efr, nil
 }
@@ -116,7 +125,7 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 		return []error{fmt.Errorf("unable to add egress firewall policy, namespace: %s has no address set", egressFirewall.Namespace)}
 	}
 
-	err = ef.addLogicalRouterPolicyToClusterRouter(nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName(), egressFirewallStartPriorityInt)
+	err = oc.addLogicalRouterPolicyToClusterRouter(nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName(), egressFirewall.Namespace, egressFirewallStartPriorityInt)
 	if err != nil {
 		return []error{err}
 	}
@@ -132,12 +141,23 @@ func (oc *Controller) updateEgressFirewall(oldEgressFirewall, newEgressFirewall 
 
 func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.EgressFirewall) []error {
 	klog.Infof("Deleting egress Firewall %s in namespace %s", egressFirewall.Name, egressFirewall.Namespace)
+	deleteDNS := false
 
 	nsInfo := oc.getNamespaceLocked(egressFirewall.Namespace)
 	if nsInfo != nil {
 		// clear it so an error does not prevent future egressFirewalls
+		for _, rule := range nsInfo.egressFirewallPolicy.egressRules {
+			if len(rule.to.dnsName) > 0 {
+				deleteDNS = true
+				break
+			}
+
+		}
 		nsInfo.egressFirewallPolicy = nil
 		nsInfo.Unlock()
+	}
+	if deleteDNS {
+		oc.egressFirewallDNS.Delete(egressFirewall.Namespace)
 	}
 	stdout, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading", "--columns=_uuid", "find", "logical_router_policy", fmt.Sprintf("external-ids:egressFirewall=%s", egressFirewall.Namespace))
 	if err != nil {
@@ -163,7 +183,8 @@ func (oc *Controller) updateEgressFirewallWithRetry(egressfirewall *egressfirewa
 	})
 }
 
-func (ef *egressFirewall) addLogicalRouterPolicyToClusterRouter(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string, efStartPriority int) error {
+func (oc *Controller) addLogicalRouterPolicyToClusterRouter(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, namespace string, efStartPriority int) error {
+	ef := oc.namespaces[namespace].egressFirewallPolicy
 	for _, rule := range ef.egressRules {
 		var action string
 		var matchTargets []matchTarget
@@ -172,10 +193,24 @@ func (ef *egressFirewall) addLogicalRouterPolicyToClusterRouter(hashedAddressSet
 		} else {
 			action = "drop"
 		}
-		if utilnet.IsIPv6CIDRString(rule.to.cidrSelector) {
-			matchTargets = []matchTarget{{matchKindV6CIDR, rule.to.cidrSelector}}
+		if rule.to.cidrSelector != "" {
+			if utilnet.IsIPv6CIDRString(rule.to.cidrSelector) {
+				matchTargets = []matchTarget{{matchKindV6CIDR, rule.to.cidrSelector}}
+			} else {
+				matchTargets = []matchTarget{{matchKindV4CIDR, rule.to.cidrSelector}}
+			}
 		} else {
-			matchTargets = []matchTarget{{matchKindV4CIDR, rule.to.cidrSelector}}
+			// rule based on DNS NAME
+			dnsNameAddressSets, err := oc.egressFirewallDNS.Add(ef.namespace, rule.to.dnsName)
+			if err != nil {
+				return fmt.Errorf("error with EgressFirewallDNS - %v", err)
+			}
+			if dnsNameAddressSets.GetIPv4HashName() != "" {
+				matchTargets = append(matchTargets, matchTarget{matchKindV4AddressSet, dnsNameAddressSets.GetIPv4HashName()})
+			}
+			if dnsNameAddressSets.GetIPv6HashName() != "" {
+				matchTargets = append(matchTargets, matchTarget{matchKindV6AddressSet, dnsNameAddressSets.GetIPv6HashName()})
+			}
 		}
 		match := generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, matchTargets, rule.ports)
 		err := createLogicalRouterPolicy(efStartPriority-rule.id, match, action, ef.namespace)

@@ -18,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-//func newEgressFirewallMeta(name, namespace string) metav1.ObjectMeta {
 func newObjectMeta(name, namespace string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		UID:       types.UID(namespace),
@@ -559,3 +558,17 @@ var _ = Describe("OVN test basic functions", func() {
 		}
 	})
 })
+
+//helper functions to help test egressfirewallDNS
+
+// Create an EgressDNS object without the Sync function
+// To make it easier to mock EgressFirewall functionality create an egressFirewall
+// without the go routine of the sync function
+
+//GetDNSEntryForTest Gets a dnsEntry from a EgressDNS object for testing
+func (e *EgressDNS) GetDNSEntryForTest(dnsName string) (map[string]struct{}, []net.IP, AddressSet, error) {
+	if e.dnsEntries[dnsName] == nil {
+		return nil, nil, nil, fmt.Errorf("there is no dnsEntry for dnsName: %s", dnsName)
+	}
+	return e.dnsEntries[dnsName].namespaces, e.dnsEntries[dnsName].dnsResolves, e.dnsEntries[dnsName].dnsAddressSet, nil
+}
