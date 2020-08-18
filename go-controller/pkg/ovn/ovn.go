@@ -190,6 +190,8 @@ type Controller struct {
 	// Cache used for keeping track of EgressIP pod handlers
 	egressIPPodHandlerCache map[string]factory.Handler
 
+	egressFirewallDNS *EgressDNS
+
 	// A cache used for egress IP assignments containing data for all cluster nodes
 	// used for egress IP assignments
 	eIPAllocator map[string]*eNode
@@ -708,6 +710,10 @@ func (oc *Controller) WatchCRD() {
 				}
 				oc.egressFirewallHandler = oc.WatchEgressFirewall()
 
+				oc.egressFirewallDNS, err = oc.NewEgressDNS(oc.stopChan)
+				if err != nil {
+					klog.Errorf("Error Creating EgressFirewallDNS: %v", err)
+				}
 			}
 		},
 		UpdateFunc: func(old, newer interface{}) {
@@ -716,6 +722,7 @@ func (oc *Controller) WatchCRD() {
 			crd := obj.(*apiextension.CustomResourceDefinition)
 			klog.Infof("Deleting CRD %s from cluster", crd.Name)
 			if crd.Name == egressfirewallCRD {
+				close(oc.egressFirewallDNS.stopChan)
 				oc.watchFactory.RemoveEgressFirewallHandler(oc.egressFirewallHandler)
 				oc.egressFirewallHandler = nil
 				oc.watchFactory.ShutdownEgressFirewallWatchFactory()
@@ -962,7 +969,7 @@ func (oc *Controller) WatchNodes() {
 					continue
 				}
 				if nsInfo.egressFirewallPolicy != nil {
-					err = nsInfo.egressFirewallPolicy.addACLToJoinSwitch([]string{joinSwitch(node.Name)}, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName())
+					err = oc.applyEgressFirewall([]string{joinSwitch(node.Name)}, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName(), nsInfo.egressFirewallPolicy)
 					if err != nil {
 						klog.Errorf("%s", err)
 					}

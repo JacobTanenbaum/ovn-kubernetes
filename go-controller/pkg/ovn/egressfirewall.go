@@ -36,6 +36,7 @@ type egressFirewallRule struct {
 
 type destination struct {
 	cidrSelector string
+	dnsName      string
 }
 
 func newEgressFirewall(egressFirewallPolicy *egressfirewallapi.EgressFirewall) *egressFirewall {
@@ -53,12 +54,16 @@ func newEgressFirewallRule(rawEgressFirewallRule egressfirewallapi.EgressFirewal
 		access: rawEgressFirewallRule.Type,
 	}
 
-	_, _, err := net.ParseCIDR(rawEgressFirewallRule.To.CIDRSelector)
-	if err != nil {
-		return nil, err
-	}
-	efr.to.cidrSelector = rawEgressFirewallRule.To.CIDRSelector
+	if rawEgressFirewallRule.To.DNSName != "" {
+		efr.to.dnsName = rawEgressFirewallRule.To.DNSName
+	} else {
 
+		_, _, err := net.ParseCIDR(rawEgressFirewallRule.To.CIDRSelector)
+		if err != nil {
+			return nil, err
+		}
+		efr.to.cidrSelector = rawEgressFirewallRule.To.CIDRSelector
+	}
 	efr.ports = rawEgressFirewallRule.Ports
 
 	return efr, nil
@@ -104,7 +109,7 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 	for _, node := range existingNodes.Items {
 		joinSwitches = append(joinSwitches, joinSwitch(node.Name))
 	}
-	err = ef.addACLToJoinSwitch(joinSwitches, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName())
+	err = oc.applyEgressFirewall(joinSwitches, nsInfo.addressSet.GetIPv4HashName(), nsInfo.addressSet.GetIPv6HashName(), ef)
 	if err != nil {
 		errList = append(errList, err)
 	}
@@ -165,28 +170,46 @@ func (oc *Controller) updateEgressFirewallWithRetry(egressfirewall *egressfirewa
 	})
 }
 
-func (ef *egressFirewall) addACLToJoinSwitch(joinSwitches []string, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string) error {
+func (oc *Controller) applyEgressFirewall(joinSwitches []string, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string, ef *egressFirewall) error {
 	for _, rule := range ef.egressRules {
 		var action string
-		var match string
+		var matchTargets []matchTarget
 		if rule.access == egressfirewallapi.EgressFirewallRuleAllow {
 			action = "allow"
 		} else {
 			action = "drop"
 		}
-		ip, _, err := net.ParseCIDR(rule.to.cidrSelector)
-		if err != nil {
-			// should not happen because this value is already validated
-			return fmt.Errorf("cannot add ACL %s is not a valid CIDR", rule.to.cidrSelector)
-		}
-		if utilnet.IsIPv6(ip) {
-			match, err = generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, []matchTarget{matchTarget{matchKindV6CIDR, rule.to.cidrSelector}}, rule.ports)
+		if rule.to.cidrSelector != "" {
+			ip, _, err := net.ParseCIDR(rule.to.cidrSelector)
+			if err != nil {
+				// should not happen because this value is already validated
+				return fmt.Errorf("cannot add ACL %s is not a valid CIDR", rule.to.cidrSelector)
+			}
+			if utilnet.IsIPv6(ip) {
+				matchTargets = []matchTarget{{matchKindV6CIDR, rule.to.cidrSelector}}
+			} else {
+				matchTargets = []matchTarget{{matchKindV4CIDR, rule.to.cidrSelector}}
+
+			}
 		} else {
-			match, err = generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, []matchTarget{matchTarget{matchKindV4CIDR, rule.to.cidrSelector}}, rule.ports)
+			// rule based on DNS NAME
+			if rule.access == egressfirewallapi.EgressFirewallRuleDeny {
+				return fmt.Errorf("do not use dnsName as part of a deny rule this is insecure")
+			}
+			dnsNameAddressSets, err := oc.egressFirewallDNS.Add(ef.namespace, rule.to.dnsName)
+			if err != nil {
+				return fmt.Errorf("error with EgressFirewallDNS - %v", err)
+			}
+			if dnsNameAddressSets.GetIPv4HashName() != "" {
+				matchTargets = append(matchTargets, matchTarget{matchKindV4AddressSet, dnsNameAddressSets.GetIPv4HashName()})
+			}
+			if dnsNameAddressSets.GetIPv6HashName() != "" {
+				matchTargets = append(matchTargets, matchTarget{matchKindV6AddressSet, dnsNameAddressSets.GetIPv6HashName()})
+			}
 		}
 		match := generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, matchTargets, rule.ports)
 		for _, joinSwitch := range joinSwitches {
-			err = createACLRule(defaultStartPriority-rule.id, match, action, ef.namespace, joinSwitch)
+			err := createACLRule(defaultStartPriority-rule.id, match, action, ef.namespace, joinSwitch)
 			if err != nil {
 				return err
 			}

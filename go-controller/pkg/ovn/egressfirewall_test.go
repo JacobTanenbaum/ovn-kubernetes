@@ -18,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-//func newEgressFirewallMeta(name, namespace string) metav1.ObjectMeta {
 func newObjectMeta(name, namespace string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		UID:       types.UID(namespace),
