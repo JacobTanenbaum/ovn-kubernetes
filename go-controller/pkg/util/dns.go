@@ -10,6 +10,7 @@ import (
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog"
 )
 
 const (
@@ -199,6 +200,7 @@ func (d *DNS) getIPsAndMinTTL(domain string) ([]net.IP, time.Duration, error) {
 		ttl = defaultTTL
 	}
 
+	klog.Errorf("KEYWORD:**!! %v*!!*", ips)
 	return removeDuplicateIPs(ips), ttl, nil
 }
 

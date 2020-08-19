@@ -190,13 +190,17 @@ func newOvnAddressSets(name string, ips []net.IP) (*ovnAddressSets, error) {
 			v4IPs = append(v4IPs, ip)
 		}
 	}
+	klog.Errorf("KEYWORD BLAH IPv4Mode: %t - IPv6Mode: %t", config.IPv4Mode, config.IPv6Mode)
 	if config.IPv4Mode {
+		klog.Errorf("KEYWORD HMASDGAEDF")
 		v4set, err = newOvnAddressSet(getIPv4ASName(name), v4IPs)
+		klog.Errorf("KEYWORD IN THE THING")
 		if err != nil {
 			return nil, err
 		}
 	}
 	if config.IPv6Mode {
+		klog.Errorf("KEYWORD IN THE THING")
 		v6set, err = newOvnAddressSet(getIPv6ASName(name), v6IPs)
 		if err != nil {
 			return nil, err

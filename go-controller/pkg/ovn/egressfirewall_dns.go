@@ -41,7 +41,8 @@ type dnsEntry struct {
 	dnsAddressSet AddressSet
 }
 
-func (oc *Controller) NewEgressDNS(controllerStop <-chan struct{}) (*EgressDNS, error) {
+func NewEgressDNS(addressSetFactory AddressSetFactory, controllerStop <-chan struct{}) (*EgressDNS, error) {
+	klog.Errorf("KEYWORD IN NEWEGRESSDNS")
 	dnsInfo, err := util.NewDNS("/etc/resolv.conf")
 	if err != nil {
 		utilruntime.HandleError(err)
@@ -51,7 +52,7 @@ func (oc *Controller) NewEgressDNS(controllerStop <-chan struct{}) (*EgressDNS, 
 	egressDNS := &EgressDNS{
 		dns:               dnsInfo,
 		dnsEntries:        make(map[string]*dnsEntry),
-		addressSetFactory: oc.addressSetFactory,
+		addressSetFactory: addressSetFactory,
 
 		added:          make(chan bool),
 		stopChan:       make(chan struct{}),
