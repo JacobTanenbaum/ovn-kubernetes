@@ -44,6 +44,7 @@ type dnsEntry struct {
 func NewEgressDNS(addressSetFactory AddressSetFactory, controllerStop <-chan struct{}) (*EgressDNS, error) {
 	klog.Errorf("KEYWORD IN NEWEGRESSDNS")
 	dnsInfo, err := util.NewDNS("/etc/resolv.conf")
+	klog.Errorf("KEYWORD MOCKED THE FIRST THING")
 	if err != nil {
 		utilruntime.HandleError(err)
 		return nil, err

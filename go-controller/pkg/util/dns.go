@@ -40,7 +40,7 @@ type DNS struct {
 }
 
 func NewDNS(resolverConfigFile string) (*DNS, error) {
-	config, err := dns.ClientConfigFromFile(resolverConfigFile)
+	config, err := dnsOps.ClientConfigFromFile(resolverConfigFile)
 	if err != nil || config == nil {
 		return nil, fmt.Errorf("cannot initialize the resolver: %v", err)
 	}
@@ -114,6 +114,7 @@ func (d *DNS) Update(dnsName string) (bool, error) {
 }
 
 func (d *DNS) updateOne(dns string) (bool, error) {
+	klog.Errorf("KEYWORD HERE?")
 	res, ok := d.dnsMap[dns]
 	if !ok {
 		// Should not happen, all operations on dnsMap are synchronized by d.lock
@@ -124,6 +125,7 @@ func (d *DNS) updateOne(dns string) (bool, error) {
 	if err != nil {
 		res.nextQueryTime = time.Now().Add(defaultTTL)
 		d.dnsMap[dns] = res
+		klog.Errorf("KEYWORD returning Error")
 		return false, err
 	}
 
@@ -145,9 +147,12 @@ func (d *DNS) getIPsAndMinTTL(domain string) ([]net.IP, time.Duration, error) {
 	var minTTL uint32
 
 	for _, recordType := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		klog.Errorf("KEYWORD FIRST OR SECOND TIME ")
 		for _, server := range d.nameservers {
 			msg := new(dns.Msg)
-			msg.SetQuestion(dns.Fqdn(domain), recordType)
+			klog.Errorf("KEYWORD ALSO HERE")
+			dnsOps.SetQuestion(msg, dnsOps.Fqdn(domain), recordType)
+			klog.Errorf("KEYWORD ALSO HERE AT THE DISCO")
 
 			dialServer := server
 			if _, _, err := net.SplitHostPort(server); err != nil {
@@ -155,7 +160,9 @@ func (d *DNS) getIPsAndMinTTL(domain string) ([]net.IP, time.Duration, error) {
 			}
 			c := new(dns.Client)
 			c.Timeout = 5 * time.Second
-			in, _, err := c.Exchange(msg, dialServer)
+			klog.Errorf("KEYWORD ALSO HERE WHY")
+			in, _, err := dnsOps.Exchange(c, msg, dialServer)
+			klog.Errorf("KEYWORD ALSO HERE OR NOT")
 			if err != nil {
 				return nil, defaultTTL, err
 			}
@@ -188,7 +195,7 @@ func (d *DNS) getIPsAndMinTTL(domain string) ([]net.IP, time.Duration, error) {
 	}
 
 	if !ttlSet || (len(ips) == 0) {
-		return nil, defaultTTL, fmt.Errorf("IPv4 addr not found for domain: %q, nameservers: %v", domain, d.nameservers)
+		return nil, defaultTTL, fmt.Errorf("IPv4 or IPv6 addr not found for domain: %q, nameservers: %v", domain, d.nameservers)
 	}
 
 	ttl, err := time.ParseDuration(fmt.Sprintf("%ds", minTTL))

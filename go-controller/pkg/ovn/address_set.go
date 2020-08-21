@@ -218,7 +218,7 @@ func newOvnAddressSet(name string, ips []net.IP) (*ovnAddressSet, error) {
 	for _, ip := range ips {
 		as.ips[ip.String()] = ip
 	}
-
+	klog.Errorf("KEYWORD MAKING A CALL")
 	uuid, stderr, err := util.RunOVNNbctl("--data=bare",
 		"--no-heading", "--columns=_uuid", "find", "address_set",
 		"name="+as.hashName)
