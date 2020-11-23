@@ -16,6 +16,7 @@ import (
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/ipallocator"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/subnetallocator"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -69,7 +70,7 @@ type namespaceInfo struct {
 
 	// addressSet is an address set object that holds the IP addresses
 	// of all pods in the namespace.
-	addressSet AddressSet
+	addressSet addressset.AddressSet
 
 	// map from NetworkPolicy name to namespacePolicy. You must hold the
 	// namespaceInfo's mutex to add/delete/lookup policies, but must hold the
@@ -140,7 +141,7 @@ type Controller struct {
 	namespacesMutex sync.Mutex
 
 	// An address set factory that creates address sets
-	addressSetFactory AddressSetFactory
+	addressSetFactory addressset.AddressSetFactory
 
 	// Port group for all cluster logical switch ports
 	clusterPortGroupUUID string
@@ -218,9 +219,9 @@ func GetIPFullMask(ip string) string {
 // NewOvnController creates a new OVN controller for creating logical network
 // infrastructure and policy
 func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
-	stopChan <-chan struct{}, addressSetFactory AddressSetFactory, ovnNBClient goovn.Client, ovnSBClient goovn.Client, recorder record.EventRecorder) *Controller {
+	stopChan <-chan struct{}, addressSetFactory addressset.AddressSetFactory, ovnNBClient goovn.Client, ovnSBClient goovn.Client, recorder record.EventRecorder) *Controller {
 	if addressSetFactory == nil {
-		addressSetFactory = NewOvnAddressSetFactory()
+		addressSetFactory = addressset.NewOvnAddressSetFactory()
 	}
 	return &Controller{
 		client: ovnClient.KubeClient,

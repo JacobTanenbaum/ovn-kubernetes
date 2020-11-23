@@ -1,4 +1,4 @@
-package ovn
+package addressset
 
 import (
 	"fmt"
@@ -131,11 +131,12 @@ func (asf *ovnAddressSetFactory) DestroyAddressSetInBackingStore(name string) er
 	if err != nil {
 		return err
 	}
-	err = destroyAddressSet(getIPv4ASName(name))
+	ip4ASName, ip6ASName := MakeAddressSetName(name)
+	err = destroyAddressSet(ip4ASName)
 	if err != nil {
 		return err
 	}
-	err = destroyAddressSet(getIPv6ASName(name))
+	err = destroyAddressSet(ip6ASName)
 	return err
 }
 
@@ -168,7 +169,7 @@ var _ AddressSet = &ovnAddressSets{}
 
 // hash the provided input to make it a valid ovnAddressSet name.
 func hashedAddressSet(s string) string {
-	return hashForOVN(s)
+	return util.HashForOVN(s)
 }
 
 func asDetail(as *ovnAddressSet) string {
@@ -190,14 +191,15 @@ func newOvnAddressSets(name string, ips []net.IP) (*ovnAddressSets, error) {
 			v4IPs = append(v4IPs, ip)
 		}
 	}
+	ip4ASName, ip6ASName := MakeAddressSetName(name)
 	if config.IPv4Mode {
-		v4set, err = newOvnAddressSet(getIPv4ASName(name), v4IPs)
+		v4set, err = newOvnAddressSet(ip4ASName, v4IPs)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if config.IPv6Mode {
-		v6set, err = newOvnAddressSet(getIPv6ASName(name), v6IPs)
+		v6set, err = newOvnAddressSet(ip6ASName, v6IPs)
 		if err != nil {
 			return nil, err
 		}
@@ -407,18 +409,10 @@ func (as *ovnAddressSet) destroy() error {
 	return nil
 }
 
-func getIPv4ASName(name string) string {
-	return name + ipv4AddressSetSuffix
+func MakeAddressSetName(name string) (string, string) {
+	return name + ipv4AddressSetSuffix, name + ipv6AddressSetSuffix
 }
 
-func getIPv6ASName(name string) string {
-	return name + ipv6AddressSetSuffix
-}
-
-func getIPv4ASHashedName(name string) string {
-	return hashedAddressSet(name + ipv4AddressSetSuffix)
-}
-
-func getIPv6ASHashedName(name string) string {
-	return hashedAddressSet(name + ipv6AddressSetSuffix)
+func MakeAddressSetHashNames(name string) (string, string) {
+	return hashedAddressSet(name + ipv4AddressSetSuffix), hashedAddressSet(name + ipv6AddressSetSuffix)
 }

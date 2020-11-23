@@ -2,7 +2,9 @@ package util
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -138,4 +140,16 @@ func newAnnotationNotSetError(format string, args ...interface{}) error {
 func IsAnnotationNotSetError(err error) bool {
 	_, ok := err.(annotationNotSetError)
 	return ok
+}
+
+// HashforOVN hashes the provided input to make it a valid addressSet or portGroup name.
+func HashForOVN(s string) string {
+	h := fnv.New64a()
+	_, err := h.Write([]byte(s))
+	if err != nil {
+		klog.Errorf("Failed to hash %s", s)
+	}
+	hashString := strconv.FormatUint(h.Sum64(), 10)
+	return fmt.Sprintf("a%s", hashString)
+
 }
