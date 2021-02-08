@@ -11,6 +11,11 @@ import (
 	"sync"
 	"time"
 
+	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	egressfirewalldns "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/egressfirewall_dns"
+
+	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
+
 	honode "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -20,28 +25,35 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	kapi "k8s.io/api/core/v1"
+	errors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
+	//"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 )
 
+const (
+	egressFirewallDNSDefaultDuration = 30 * time.Minute
+)
+
 // OvnNode is the object holder for utilities meant for node management
 type OvnNode struct {
-	name         string
-	Kube         kube.Interface
-	watchFactory factory.NodeWatchFactory
-	stopChan     chan struct{}
-	recorder     record.EventRecorder
-	gateway      Gateway
+	name              string
+	Kube              kube.Interface
+	watchFactory      factory.NodeWatchFactory
+	egressFirewallDNS *egressfirewalldns.EgressDNS
+	stopChan          chan struct{}
+	recorder          record.EventRecorder
+	gateway           Gateway
 }
 
 // NewNode creates a new controller for node management
-func NewNode(kubeClient kubernetes.Interface, wf factory.NodeWatchFactory, name string, stopChan chan struct{}, eventRecorder record.EventRecorder) *OvnNode {
+func NewNode(ovnClientset *util.OVNClientset, wf factory.NodeWatchFactory, name string, stopChan chan struct{}, eventRecorder record.EventRecorder) *OvnNode {
 	return &OvnNode{
 		name:         name,
-		Kube:         &kube.Kube{KClient: kubeClient},
+		Kube:         &kube.Kube{KClient: ovnClientset.KubeClient, DNSObjectClient: ovnClientset.DNSObjectClient},
 		watchFactory: wf,
 		stopChan:     stopChan,
 		recorder:     eventRecorder,
@@ -183,6 +195,17 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 		return err
 	}
 
+	_, eferr := n.watchFactory.GetCRD("egressfirewalls.k8s.ovn.org")
+	_, dnsOerr := n.watchFactory.GetCRD("dnsobjects.k8s.ovn.org")
+	if eferr == nil && dnsOerr == nil {
+		klog.Infof("This node is configured with egressfirewall enabled")
+		n.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(n.name, n.watchFactory, n.Kube, make(chan struct{}))
+		if err != nil {
+			return fmt.Errorf("egressfirewall could not start properly on %s", n.name)
+		}
+		n.egressFirewallDNS.Run(egressFirewallDNSDefaultDuration)
+	}
+
 	// First wait for the node logical switch to be created by the Master, timeout is 300s.
 	err = wait.PollImmediate(500*time.Millisecond, 300*time.Second, func() (bool, error) {
 		if node, err = n.Kube.GetNode(n.name); err != nil {
@@ -271,11 +294,47 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 	}
 
 	n.WatchEndpoints()
+	n.WatchEgressFirewalls()
 
 	cniServer := cni.NewCNIServer("", n.watchFactory)
 	err = cniServer.Start(cni.HandleCNIRequest)
 
 	return err
+}
+
+//KEYWORD: TODO (jtanenba) should I be watching CRDS Watching DNSObjects to reconcile?
+func (n *OvnNode) WatchEgressFirewalls() {
+	n.watchFactory.AddEgressFirewallHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			//figure out if there is already a dns object for this node
+			dnsObject, err := n.watchFactory.GetDNSObject(n.name)
+			if err != nil && !(errors.IsNotFound(err) || errors.IsAlreadyExists(err)) {
+				klog.Errorf("failed to get dnsobject for this node, %v", err)
+				return
+			}
+			if dnsObject == nil {
+				_, err := n.Kube.CreateDNSObject(
+					&dnsobjectapi.DNSObject{
+						ObjectMeta: metav1.ObjectMeta{Name: n.name},
+						Spec:       dnsobjectapi.DNSObjectSpec{},
+					},
+				)
+				if err != nil {
+					klog.Errorf("KEYWORD: %v", err)
+				}
+
+			} else {
+				klog.Errorf("KEYWORD ALREADY HAVE ONE")
+			}
+
+			//Work on adding the DNSName()
+			egressFirewall := obj.(*egressfirewall.EgressFirewall).DeepCopy()
+			n.egressFirewallDNS.Add(egressFirewall)
+		},
+		UpdateFunc: func(old, new interface{}) {},
+		DeleteFunc: func(obj interface{}) {},
+	}, nil)
+
 }
 
 func (n *OvnNode) WatchEndpoints() {

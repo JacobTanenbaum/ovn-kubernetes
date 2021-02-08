@@ -24,6 +24,8 @@ import (
 	discovery "k8s.io/api/discovery/v1beta1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 
+	dnsobjectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1/apis/clientset/versioned"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 )
@@ -33,6 +35,7 @@ type OVNClientset struct {
 	KubeClient           kubernetes.Interface
 	EgressIPClient       egressipclientset.Interface
 	EgressFirewallClient egressfirewallclientset.Interface
+	DNSObjectClient      dnsobjectclientset.Interface
 	APIExtensionsClient  apiextensionsclientset.Interface
 }
 
@@ -133,10 +136,15 @@ func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
 	if err != nil {
 		return nil, err
 	}
+	dnsObjectClientset, err := dnsobjectclientset.NewForConfig(kconfig)
+	if err != nil {
+		return nil, err
+	}
 	return &OVNClientset{
 		KubeClient:           kclientset,
 		EgressIPClient:       egressIPClientset,
 		EgressFirewallClient: egressFirewallClientset,
+		DNSObjectClient:      dnsObjectClientset,
 		APIExtensionsClient:  crdClientset,
 	}, nil
 }

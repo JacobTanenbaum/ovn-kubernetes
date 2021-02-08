@@ -4,6 +4,9 @@ import (
 	kapi "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
+
+	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
+	apiextensionsapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 )
 
 // ObjectCacheInterface represents the exported methods for getting
@@ -28,6 +31,10 @@ type ObjectCacheInterface interface {
 type NodeWatchFactory interface {
 	Shutdownable
 
+	GetCRDS() ([]*apiextensionsapi.CustomResourceDefinition, error)
+	GetCRD(name string) (*apiextensionsapi.CustomResourceDefinition, error)
+	GetDNSObject(name string) (*dnsobjectapi.DNSObject, error)
+	AddEgressFirewallHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	AddServiceHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	AddFilteredServiceHandler(namespace string, handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	RemoveServiceHandler(handler *Handler)
