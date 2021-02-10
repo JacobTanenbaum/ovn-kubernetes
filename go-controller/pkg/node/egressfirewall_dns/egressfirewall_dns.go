@@ -11,8 +11,11 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	dnsobject "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
+	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
 	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 
+	errors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/klog"
 )
@@ -93,10 +96,7 @@ func (e *EgressDNS) Add(egressfirewall *egressfirewall.EgressFirewall) error {
 				entry.Namespaces = append(entry.Namespaces, egressfirewall.Namespace)
 				dnsObject.Spec.DNSObjectEntries[egressFirewallRule.To.DNSName] = entry
 				e.k.UpdateDNSObject(dnsObject)
-
 			}
-		} else {
-			klog.Errorf("KEYWORD: THIS RULE HAS NO DNSNAME AND THE DESTINATION IS CIDR: %s", egressFirewallRule.To.CIDRSelector)
 		}
 	}
 
@@ -113,8 +113,16 @@ func (e *EgressDNS) updateEntryForName(dnsNamespace dnsNamespace) error {
 	klog.Errorf("KEYWORD THESE ARE THE IPS FOR %s: %s", dnsNamespace.dnsName, e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
 	//update the dnsObject
 	dnsObject, err := e.wf.GetDNSObject(e.nodeName)
-	if err != nil {
+	if err != nil && !(errors.IsNotFound(err) || errors.IsAlreadyExists(err)) {
 		return err
+	}
+	existed := true
+	if dnsObject == nil {
+		existed = false
+		dnsObject = &dnsobjectapi.DNSObject{
+			ObjectMeta: metav1.ObjectMeta{Name: e.nodeName},
+			Spec:       dnsobjectapi.DNSObjectSpec{},
+		}
 	}
 	var ipStrings []string
 	klog.Errorf("KEYWORD got the dnsobject %s", dnsObject.Name)
@@ -148,7 +156,11 @@ func (e *EgressDNS) updateEntryForName(dnsNamespace dnsNamespace) error {
 	}
 	dnsObject.Spec.DNSObjectEntries[dnsNamespace.dnsName] = dnsObjectEntry
 
-	e.k.UpdateDNSObject(dnsObject)
+	if existed {
+		e.k.UpdateDNSObject(dnsObject)
+	} else {
+		e.k.CreateDNSObject(dnsObject)
+	}
 
 	return nil
 }

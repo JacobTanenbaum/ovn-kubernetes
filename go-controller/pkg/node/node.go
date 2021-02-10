@@ -14,7 +14,7 @@ import (
 	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	egressfirewalldns "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/egressfirewall_dns"
 
-	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
+	//dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
 
 	honode "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
@@ -25,8 +25,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	kapi "k8s.io/api/core/v1"
-	errors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	//errors "k8s.io/apimachinery/pkg/api/errors"
+	//metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	//"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -307,25 +307,25 @@ func (n *OvnNode) WatchEgressFirewalls() {
 	n.watchFactory.AddEgressFirewallHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			//figure out if there is already a dns object for this node
-			dnsObject, err := n.watchFactory.GetDNSObject(n.name)
-			if err != nil && !(errors.IsNotFound(err) || errors.IsAlreadyExists(err)) {
-				klog.Errorf("failed to get dnsobject for this node, %v", err)
-				return
-			}
-			if dnsObject == nil {
-				_, err := n.Kube.CreateDNSObject(
-					&dnsobjectapi.DNSObject{
-						ObjectMeta: metav1.ObjectMeta{Name: n.name},
-						Spec:       dnsobjectapi.DNSObjectSpec{},
-					},
-				)
-				if err != nil {
-					klog.Errorf("KEYWORD: %v", err)
-				}
-
-			} else {
-				klog.Errorf("KEYWORD ALREADY HAVE ONE")
-			}
+			//dnsObject, err := n.watchFactory.GetDNSObject(n.name)
+			//if err != nil && !(errors.IsNotFound(err) || errors.IsAlreadyExists(err)) {
+			//	klog.Errorf("failed to get dnsobject for this node, %v", err)
+			//	return
+			//}
+			//			if dnsObject == nil {
+			//				_, err := n.Kube.CreateDNSObject(
+			//					&dnsobjectapi.DNSObject{
+			//						ObjectMeta: metav1.ObjectMeta{Name: n.name},
+			//						Spec:       dnsobjectapi.DNSObjectSpec{},
+			//					},
+			//				)
+			//				if err != nil {
+			//					klog.Errorf("KEYWORD: %v", err)
+			//				}
+			//
+			//			} else {
+			//				klog.Errorf("KEYWORD ALREADY HAVE ONE")
+			//			}
 
 			//Work on adding the DNSName()
 			egressFirewall := obj.(*egressfirewall.EgressFirewall).DeepCopy()
