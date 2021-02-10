@@ -293,6 +293,7 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 		}
 	}
 
+	n.watchFactory.InitializeEgressFirewallWatchFactory()
 	n.WatchEndpoints()
 	n.WatchEgressFirewalls()
 

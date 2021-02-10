@@ -242,7 +242,11 @@ func NewNodeWatchFactory(ovnClientset *util.OVNClientset, nodeName string) (*Wat
 	})
 
 	var err error
-	err = wf.InitializeEgressFirewallWatchFactory()
+	err = apiextensionsapi.AddToScheme(apiextensionsscheme.Scheme)
+	if err != nil {
+		return nil, err
+	}
+	//err = wf.InitializeEgressFirewallWatchFactory()
 	if err != nil {
 		return nil, err
 	}
@@ -307,6 +311,9 @@ func (wf *WatchFactory) InitializeEgressFirewallWatchFactory() error {
 	}
 	wf.dnsObjectFactory = dnsobjectinformerfactory.NewSharedInformerFactory(wf.dnsObjectClientset, resyncInterval)
 	wf.informers[dnsObjectType], err = newInformer(dnsObjectType, wf.dnsObjectFactory.K8s().V1().DNSObjects().Informer())
+	if err != nil {
+		return err
+	}
 	wf.dnsObjectFactory.Start(wf.stopChan)
 	for oType, synced := range wf.dnsObjectFactory.WaitForCacheSync(wf.stopChan) {
 		if !synced {
