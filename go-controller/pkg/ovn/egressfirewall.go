@@ -174,23 +174,23 @@ func (oc *Controller) updateEgressFirewall(oldEgressFirewall, newEgressFirewall 
 
 func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.EgressFirewall) error {
 	klog.Infof("Deleting egress Firewall %s in namespace %s", egressFirewall.Name, egressFirewall.Namespace)
-	deleteDNS := false
+	//deleteDNS := false
 
 	nsInfo := oc.getNamespaceLocked(egressFirewall.Namespace)
 	if nsInfo != nil {
 		// clear it so an error does not prevent future egressFirewalls
 		for _, rule := range nsInfo.egressFirewallPolicy.egressRules {
 			if len(rule.to.dnsName) > 0 {
-				deleteDNS = true
+				//deleteDNS = true
 				break
 			}
 		}
 		nsInfo.egressFirewallPolicy = nil
 		nsInfo.Unlock()
 	}
-	if deleteDNS {
-		oc.egressFirewallDNS.Delete(egressFirewall.Namespace)
-	}
+	//	if deleteDNS {
+	//		oc.egressFirewallDNS.Delete(egressFirewall.Namespace)
+	//}
 
 	return deleteEgressFirewallRules(egressFirewall.Namespace)
 }
@@ -224,18 +224,32 @@ func (oc *Controller) addEgressFirewallRules(hashedAddressSetNameIPv4, hashedAdd
 				matchTargets = []matchTarget{{matchKindV4CIDR, rule.to.cidrSelector}}
 			}
 		} else {
-			// rule based on DNS NAME
-			dnsNameAddressSets, err := oc.egressFirewallDNS.Add(ef.namespace, rule.to.dnsName)
+			//KEYWORD MAKE AN ADDRESS_SET? with a known name...
+			as, err := oc.addressSetFactory.NewAddressSet(rule.to.dnsName, nil)
 			if err != nil {
-				return fmt.Errorf("error with EgressFirewallDNS - %v", err)
+				return err
 			}
-			dnsNameIPv4ASHashName, dnsNameIPv6ASHashName := dnsNameAddressSets.GetASHashNames()
+			dnsNameIPv4ASHashName, dnsNameIPv6ASHashName := as.GetASHashNames()
 			if dnsNameIPv4ASHashName != "" {
 				matchTargets = append(matchTargets, matchTarget{matchKindV4AddressSet, dnsNameIPv4ASHashName})
 			}
 			if dnsNameIPv6ASHashName != "" {
 				matchTargets = append(matchTargets, matchTarget{matchKindV6AddressSet, dnsNameIPv6ASHashName})
 			}
+			/*
+				// rule based on DNS NAME
+				dnsNameAddressSets, err := oc.egressFirewallDNS.Add(ef.namespace, rule.to.dnsName)
+				if err != nil {
+					return fmt.Errorf("error with EgressFirewallDNS - %v", err)
+				}
+				dnsNameIPv4ASHashName, dnsNameIPv6ASHashName := dnsNameAddressSets.GetASHashNames()
+				if dnsNameIPv4ASHashName != "" {
+					matchTargets = append(matchTargets, matchTarget{matchKindV4AddressSet, dnsNameIPv4ASHashName})
+				}
+				if dnsNameIPv6ASHashName != "" {
+					matchTargets = append(matchTargets, matchTarget{matchKindV6AddressSet, dnsNameIPv6ASHashName})
+				}
+			*/
 		}
 		match := generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, matchTargets, rule.ports)
 		err = createEgressFirewallRules(efStartPriority-rule.id, match, action, ef.namespace)

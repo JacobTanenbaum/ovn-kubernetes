@@ -23,6 +23,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/subnetallocator"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
+	dnsobject "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
 	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 
 	apiextension "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
@@ -117,6 +118,7 @@ type Controller struct {
 	kube                  kube.Interface
 	watchFactory          *factory.WatchFactory
 	egressFirewallHandler *factory.Handler
+	dnsObjectHandler      *factory.Handler
 	stopChan              <-chan struct{}
 
 	// FIXME DUAL-STACK -  Make IP Allocators more dual-stack friendly
@@ -174,8 +176,6 @@ type Controller struct {
 
 	// Controller used for programming OVN for egress IP
 	eIPC egressIPController
-
-	egressFirewallDNS *EgressDNS
 
 	// Is ACL logging enabled while configuring meters?
 	aclLoggingEnabled bool
@@ -646,12 +646,9 @@ func (oc *Controller) WatchCRD() {
 					return
 				}
 
-				oc.egressFirewallDNS, err = NewEgressDNS(oc.addressSetFactory, oc.stopChan)
-				oc.egressFirewallDNS.Run(egressFirewallDNSDefaultDuration)
-				if err != nil {
-					klog.Errorf("Error Creating EgressFirewallDNS: %v", err)
-				}
 				oc.egressFirewallHandler = oc.WatchEgressFirewall()
+				oc.dnsObjectHandler = oc.WatchDNSObject()
+
 			}
 		},
 		UpdateFunc: func(old, newer interface{}) {
@@ -660,7 +657,7 @@ func (oc *Controller) WatchCRD() {
 			crd := obj.(*apiextension.CustomResourceDefinition)
 			klog.Infof("Deleting CRD %s from cluster", crd.Name)
 			if crd.Name == egressfirewallCRD {
-				oc.egressFirewallDNS.Shutdown()
+				//oc.egressFirewallDNS.Shutdown()
 				oc.watchFactory.RemoveEgressFirewallHandler(oc.egressFirewallHandler)
 				oc.egressFirewallHandler = nil
 				oc.watchFactory.ShutdownEgressFirewallWatchFactory()
@@ -712,6 +709,86 @@ func (oc *Controller) WatchEgressFirewall() *factory.Handler {
 			if deleteErrors != nil {
 				klog.Error(deleteErrors)
 			}
+		},
+	}, nil)
+}
+
+// WatchDNSObject start the watching of dnsObject resource and calls back the
+// appropriate handler logic
+// the addressSets that we are updating is based on the dnsName so that can be generated on the fly
+func (oc *Controller) WatchDNSObject() *factory.Handler {
+	return oc.watchFactory.AddDNSObjectHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			klog.Errorf("KEYWORD: ADDING DNSOBJECT")
+			dnsObject := obj.(*dnsobject.DNSObject)
+
+			for dnsName, dnsEntries := range dnsObject.Spec.DNSObjectEntries {
+
+				fmt.Errorf("KEYWORD: %+v", dnsEntries)
+				var ipNet []net.IP
+				for _, ip := range dnsEntries.IPAddresses {
+					klog.Errorf("This is the IP address: %s : %v", ip, net.ParseIP(ip))
+					ipNet = append(ipNet, net.ParseIP(ip))
+				}
+
+				oc.addressSetFactory.NewAddressSet(dnsName, ipNet)
+			}
+
+		},
+		UpdateFunc: func(newer, older interface{}) {
+			klog.Errorf("KEYWORD: UPDATING DNSOBJECT")
+			//figure out if the given dnsNames address has changed
+			//if so figure out the ips to add and remove
+			//addrset = oc.AddressSetFactory.NewAddressSet(name, ipaddresses)
+			//addrset.DeleteIPs(ips to remove)
+
+			// the only time I should delete the addressSet is if the rule is deleted
+			//IPaddresses to add map[string] []net.IP
+			//IPaddresses to rem map[string] []net.IP
+			newerDNS := newer.(*dnsobject.DNSObject)
+			olderDNS := older.(*dnsobject.DNSObject)
+
+			for newerDNSName, newerDNSEntries := range newerDNS.Spec.DNSObjectEntries {
+				if _, exists := olderDNS.Spec.DNSObjectEntries[newerDNSName]; !exists {
+					klog.Errorf("KEYWORD: WHAT IS HAPPENING %+v", olderDNS.Spec.DNSObjectEntries[newerDNSName])
+				} else {
+					klog.Errorf("KEYWORD THIS TIME SHOULD GO INTO THE FULL UPDATE")
+				}
+				if _, exists := olderDNS.Spec.DNSObjectEntries[newerDNSName]; !exists {
+					var ipNet []net.IP
+					for _, ip := range newerDNSEntries.IPAddresses {
+						ipNet = append(ipNet, net.ParseIP(ip))
+					}
+					_, err := oc.addressSetFactory.NewAddressSet(newerDNSName, ipNet)
+					if err != nil {
+						klog.Errorf("KEYWORD: HUBBA WHAA %v", err)
+					}
+				} else {
+					klog.Errorf("KEYWORD IN THE ELSE: %s", olderDNS.Spec.DNSObjectEntries[newerDNSName])
+					//figure out the delta add then delete
+				}
+			}
+			/*
+				cases
+					case 1: egressDNSEntry in newer and not in older
+						happens when a new egressFirewallDNSName is added as part of rule
+					case 2: egressDNSEntry in older and not in newer
+						when an egressFirewallDNS name is removed from a rule, I think that I can ignore this case because the egressFirewall rule will be deleted...
+					case 3: egressDNSEntry in newer and older they are just different
+			*/
+
+			//newEgressDNSNames()
+
+			//newEgressDNSAddresses
+			//removedDNSNames
+			//removedDNSaddresses
+
+			//for NewerDNSNames, newerDNSEntries := range newerDNS.Spec.DnsObjectEntries {
+			//
+			//}
+		},
+		DeleteFunc: func(obj interface{}) {
+			klog.Errorf("KEYWORD: DELETING DNSOBJECT")
 		},
 	}, nil)
 }
