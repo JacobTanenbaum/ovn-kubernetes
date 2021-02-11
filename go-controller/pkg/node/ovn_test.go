@@ -13,6 +13,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/record"
 
+	dnsobjectfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1/apis/clientset/versioned/fake"
+	egressfirewallfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned/fake"
 	egressipfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
 )
@@ -49,8 +51,11 @@ func (o *FakeOVNNode) start(ctx *cli.Context, objects ...runtime.Object) {
 	Expect(err).NotTo(HaveOccurred())
 
 	o.fakeClient = &util.OVNClientset{
-		KubeClient:          fake.NewSimpleClientset(v1Objects...),
-		EgressIPClient:      egressipfake.NewSimpleClientset(),
+		KubeClient:           fake.NewSimpleClientset(v1Objects...),
+		EgressIPClient:       egressipfake.NewSimpleClientset(),
+		EgressFirewallClient: egressfirewallfake.NewSimpleClientset(),
+		DNSObjectClient:      dnsobjectfake.NewSimpleClientset(),
+
 		APIExtensionsClient: apiextensionsfake.NewSimpleClientset(),
 	}
 	o.init()
@@ -74,6 +79,6 @@ func (o *FakeOVNNode) init() {
 	o.watcher, err = factory.NewNodeWatchFactory(o.fakeClient, fakeNodeName)
 	Expect(err).NotTo(HaveOccurred())
 
-	o.node = NewNode(o.fakeClient.KubeClient, o.watcher, fakeNodeName, o.stopChan, o.recorder)
+	o.node = NewNode(o.fakeClient, o.watcher, fakeNodeName, o.stopChan, o.recorder)
 	o.node.Start(o.wg)
 }

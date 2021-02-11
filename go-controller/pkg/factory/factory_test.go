@@ -138,6 +138,9 @@ func newDNSObject(name string) *dnsobject.DNSObject {
 				"name": name,
 			},
 		},
+		Spec: dnsobject.DNSObjectSpec{
+			DNSObjectEntries: make(map[string]dnsobject.DNSObjectEntry),
+		},
 	}
 }
 
