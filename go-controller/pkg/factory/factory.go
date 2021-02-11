@@ -368,6 +368,10 @@ func getObjectMeta(objType reflect.Type, obj interface{}) (*metav1.ObjectMeta, e
 		if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
 			return &egressFirewall.ObjectMeta, nil
 		}
+	case dnsObjectType:
+		if dnsObject, ok := obj.(*dnsobjectapi.DNSObject); ok {
+			return &dnsObject.ObjectMeta, nil
+		}
 	case egressIPType:
 		if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
 			return &egressIP.ObjectMeta, nil
@@ -494,6 +498,11 @@ func (wf *WatchFactory) AddEgressFirewallHandler(handlerFuncs cache.ResourceEven
 // RemoveEgressFirewallHandler removes an EgressFirewall object event handler function
 func (wf *WatchFactory) RemoveEgressFirewallHandler(handler *Handler) {
 	wf.removeHandler(egressFirewallType, handler)
+}
+
+// RemoveDNSObjectHandler removes an DNSObject object event handler function
+func (wf *WatchFactory) RemoveDNSObjectHandler(handler *Handler) {
+	wf.removeHandler(dnsObjectType, handler)
 }
 
 // AddCRDHandler adds a handler function that will be executed on CRD obje changes
