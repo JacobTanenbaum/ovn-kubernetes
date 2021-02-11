@@ -10,7 +10,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	//addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	t "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/urfave/cli/v2"
@@ -936,9 +936,11 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 // without the go routine of the sync function
 
 //GetDNSEntryForTest Gets a dnsEntry from a EgressDNS object for testing
+/*
 func (e *EgressDNS) GetDNSEntryForTest(dnsName string) (map[string]struct{}, []net.IP, addressset.AddressSet, error) {
 	if e.dnsEntries[dnsName] == nil {
 		return nil, nil, nil, fmt.Errorf("there is no dnsEntry for dnsName: %s", dnsName)
 	}
 	return e.dnsEntries[dnsName].namespaces, e.dnsEntries[dnsName].dnsResolves, e.dnsEntries[dnsName].dnsAddressSet, nil
 }
+*/
