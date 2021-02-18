@@ -9,6 +9,7 @@ import (
 	"net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
 	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	//addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -37,6 +38,10 @@ func newEgressFirewallObject(name, namespace string, egressRules []egressfirewal
 			Egress: egressRules,
 		},
 	}
+}
+
+func newDNSObject(name string, namespaces, ipaddresses []string) *dnsobjectapi.DNSObject {
+
 }
 
 var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", func() {
@@ -176,6 +181,61 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		})
+		ginkgo.It("reconciles an existing DNSObject and egressFirewall", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					node1Name string = "node1"
+				)
+				fExec.AddFakeCmdsNoOutputNoError([]string{"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == $a13161312698469205037 || ip6.dst == $a13161310499445948615) && (ip4.src == $a10481622940199974102 || ip6.src == $a10481620741176717680) && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy"})
+
+				namespace1 := *newNamespace("namespace1")
+				egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.google.com",
+						},
+					},
+				})
+
+				fakeOVN.start(ctx,
+					&egressfirewallapi.EgressFirewallList{
+						Items: []egressfirewallapi.EgressFirewall{
+							*egressFirewall,
+						},
+					},
+					&v1.NamespaceList{
+						Items: []v1.Namespace{
+							namespace1,
+						},
+					}, &v1.NodeList{
+						Items: []v1.Node{
+							{
+								Status: v1.NodeStatus{
+									Phase: v1.NodeRunning,
+								},
+								ObjectMeta: newObjectMeta(node1Name, ""),
+							},
+						},
+					})
+				config.IPv6Mode = true
+				fakeOVN.controller.WatchNamespaces()
+				fakeOVN.controller.WatchEgressFirewall()
+				fakeOVN.controller.WatchDNSObject()
+
+				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				gomega.Eventually(fExec.CalledMatchesExpected).Should(gomega.BeTrue(), fExec.ErrorDesc)
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		})
+
 	})
 	ginkgo.Context("during execution", func() {
 		ginkgo.It("correctly creates an egressfirewall denying traffic udp traffic on port 100", func() {
