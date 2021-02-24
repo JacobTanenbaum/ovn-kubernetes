@@ -3,15 +3,15 @@ package ovn
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
-	"net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
 	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	//addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	t "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/urfave/cli/v2"
@@ -40,8 +40,15 @@ func newEgressFirewallObject(name, namespace string, egressRules []egressfirewal
 	}
 }
 
-func newDNSObject(name string, namespaces, ipaddresses []string) *dnsobjectapi.DNSObject {
+//new DNSObject creates a dnsObject for testing the dnsNameMap is map[dnsName]ipaddresses
+func newDNSObject(name string, dnsObjectEntries map[string]dnsobjectapi.DNSObjectEntry) *dnsobjectapi.DNSObject {
 
+	return &dnsobjectapi.DNSObject{
+		ObjectMeta: newObjectMeta(name, ""),
+		Spec: dnsobjectapi.DNSObjectSpec{
+			DNSObjectEntries: dnsObjectEntries,
+		},
+	}
 }
 
 var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", func() {
@@ -197,11 +204,21 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 						},
 					},
 				})
-
+				dnsObject := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
+					"www.google.com": dnsobjectapi.DNSObjectEntry{
+						Namespaces:  []string{namespace1.Name},
+						IPAddresses: []string{"1.1.1.1"},
+					},
+				})
 				fakeOVN.start(ctx,
 					&egressfirewallapi.EgressFirewallList{
 						Items: []egressfirewallapi.EgressFirewall{
 							*egressFirewall,
+						},
+					},
+					&dnsobjectapi.DNSObjectList{
+						Items: []dnsobjectapi.DNSObject{
+							*dnsObject,
 						},
 					},
 					&v1.NamespaceList{
@@ -219,9 +236,15 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 						},
 					})
 				config.IPv6Mode = true
+				//TODO: change the fake addressSetFactory code to use the mocks library
 				fakeOVN.controller.WatchNamespaces()
 				fakeOVN.controller.WatchEgressFirewall()
+				fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.google.com")
 				fakeOVN.controller.WatchDNSObject()
+				fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1"})
+				//verify that the egressfirewallDNSInfo struct is correct
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name}))
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal([]string{namespace1.Name}))
 
 				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -296,7 +319,90 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
+		ginkgo.It("correctly creates an egressfirewall denying traffic udp traffic on port 100 and DNS Allow", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					node1Name string = "node1"
+				)
+				fExec.AddFakeCmdsNoOutputNoError([]string{
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == 1.2.3.4/23) && ip4.src == $a10481622940199974102 && ((udp && ( udp.dst == 100 ))) && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9998 match=\"(ip4.dst == $a13161312698469205037) && ip4.src == $a10481622940199974102 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+				})
+				namespace1 := *newNamespace("namespace1")
+				egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Deny",
+						Ports: []egressfirewallapi.EgressFirewallPort{
+							{
+								Protocol: "UDP",
+								Port:     100,
+							},
+						},
+						To: egressfirewallapi.EgressFirewallDestination{
+							CIDRSelector: "1.2.3.4/23",
+						},
+					},
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.google.com",
+						},
+					},
+				})
+				dnsObject := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
+					"www.google.com": dnsobjectapi.DNSObjectEntry{
+						Namespaces:  []string{namespace1.Name},
+						IPAddresses: []string{"1.1.1.1"},
+					},
+				})
+				fakeOVN.start(ctx,
+					&egressfirewallapi.EgressFirewallList{
+						Items: []egressfirewallapi.EgressFirewall{
+							*egressFirewall,
+						},
+					},
+					&dnsobjectapi.DNSObjectList{
+						Items: []dnsobjectapi.DNSObject{
+							*dnsObject,
+						},
+					},
+					&v1.NamespaceList{
+						Items: []v1.Namespace{
+							namespace1,
+						},
+					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							{
+								Status: v1.NodeStatus{
+									Phase: v1.NodeRunning,
+								},
+								ObjectMeta: newObjectMeta(node1Name, ""),
+							},
+						},
+					})
+
+				fakeOVN.controller.WatchNamespaces()
+				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				fakeOVN.controller.WatchEgressFirewall()
+				fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.google.com")
+				fakeOVN.controller.WatchDNSObject()
+				fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1"})
+				//verify that the egressfirewallDNSInfo struct is correct
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name}))
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal([]string{namespace1.Name}))
+
+				gomega.Eventually(fExec.CalledMatchesExpected).Should(gomega.BeTrue(), fExec.ErrorDesc)
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
 		ginkgo.It("correctly deletes an egressfirewall", func() {
+			//fakeUUID2 = "12345"
 			app.Action = func(ctx *cli.Context) error {
 				const (
 					node1Name string = "node1"
@@ -360,6 +466,169 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				return nil
 			}
 
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+		ginkgo.It("correctly deletes an egressfirewall with DNS", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					node1Name string = "node1"
+					fakeUUID2 string = "12345"
+				)
+				fExec.AddFakeCmdsNoOutputNoError([]string{
+					// egressfirewall adding for namespace1
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == 1.2.3.4/23) && " +
+						"ip4.src == $a10481622940199974102 && ((udp && ( udp.dst == 100 ))) && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9998 match=\"(ip4.dst == $a13161312698469205037) && " +
+						"ip4.src == $a10481622940199974102 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					// egressfirewall adding for namespace2
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == 1.2.3.4/23) && " +
+						"ip4.src == $a4615334824109672969 && ((udp && ( udp.dst == 100 ))) && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace2 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9998 match=\"(ip4.dst == $a13161312698469205037) && ip4.src == $a4615334824109672969 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace2 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 lr-policy-del ovn_cluster_router " + fmt.Sprintf("%s", fakeUUID),
+					"ovn-nbctl --timeout=15 lr-policy-del ovn_cluster_router " + fmt.Sprintf("%s", fakeUUID2),
+				})
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find logical_router_policy external-ids:egressFirewall=namespace1",
+					Output: fmt.Sprintf("%s", fakeUUID),
+				})
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find logical_router_policy external-ids:egressFirewall=namespace2",
+					Output: fmt.Sprintf("%s", fakeUUID2),
+				})
+				namespace1 := *newNamespace("namespace1")
+				namespace2 := *newNamespace("namespace2")
+				egressFirewall1 := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Deny",
+						Ports: []egressfirewallapi.EgressFirewallPort{
+							{
+								Protocol: "UDP",
+								Port:     100,
+							},
+						},
+						To: egressfirewallapi.EgressFirewallDestination{
+							CIDRSelector: "1.2.3.4/23",
+						},
+					},
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.google.com",
+						},
+					},
+				})
+				egressFirewall2 := newEgressFirewallObject("default", namespace2.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Deny",
+						Ports: []egressfirewallapi.EgressFirewallPort{
+							{
+								Protocol: "UDP",
+								Port:     100,
+							},
+						},
+						To: egressfirewallapi.EgressFirewallDestination{
+							CIDRSelector: "1.2.3.4/23",
+						},
+					},
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.google.com",
+						},
+					},
+				})
+				dnsObject1 := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
+					"www.google.com": dnsobjectapi.DNSObjectEntry{
+						IPAddresses: []string{"1.1.1.1"},
+					},
+				})
+				dnsObject2 := newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
+					"www.google.com": dnsobjectapi.DNSObjectEntry{
+						IPAddresses: []string{"1.1.1.1", "2.2.2.2"},
+					},
+				})
+				fakeOVN.start(ctx,
+					&egressfirewallapi.EgressFirewallList{
+						Items: []egressfirewallapi.EgressFirewall{
+							*egressFirewall1,
+							*egressFirewall2,
+						},
+					},
+					&dnsobjectapi.DNSObjectList{
+						Items: []dnsobjectapi.DNSObject{
+							*dnsObject1,
+							*dnsObject2,
+						},
+					},
+					&v1.NamespaceList{
+						Items: []v1.Namespace{
+							namespace1,
+							namespace2,
+						},
+					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							{
+								Status: v1.NodeStatus{
+									Phase: v1.NodeRunning,
+								},
+								ObjectMeta: newObjectMeta(node1Name, ""),
+							},
+						},
+					})
+				//KEYWORD: NEED TO DEAL WITH A FEW CASES
+				// 1. A DNS OBJECT is deleted (could be part of node delete)
+				// 2. An EgressFirewall gets deleted sharing a dnsName with another EgressFirewall, in that case nothing except the namespace should be deleted
+				// 3. the last egressfirewall with a DNS name gets deleted safely deleting the addressSet
+				fakeOVN.controller.WatchNamespaces()
+				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall1.Namespace).Get(context.TODO(), egressFirewall1.Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				fakeOVN.controller.WatchEgressFirewall()
+				fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.google.com")
+				fakeOVN.controller.WatchDNSObject()
+				fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1", "2.2.2.2"})
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name, "node2"}))
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["2.2.2.2"]).To(gomega.Equal([]string{"node2"}))
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
+					namespace1.Name: struct{}{},
+					namespace2.Name: struct{}{},
+				}))
+
+				//case 1: a node gets deleted but nothing with the egressfirewall itself changes
+				err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Delete(context.TODO(), dnsObject2.Name, *metav1.NewDeleteOptions(0))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				fakeOVN.asf.EventuallyExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1"})
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name}))
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["2.2.2.2"]).To(gomega.BeNil())
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
+					namespace1.Name: struct{}{},
+					namespace2.Name: struct{}{},
+				}))
+
+				//case 2: An egressFirewall gets deleted that shares DNS information with another egressFirewall
+				err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(namespace1.Name).Delete(context.TODO(), egressFirewall1.Name, *metav1.NewDeleteOptions(0))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name}))
+
+				gomega.Eventually(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).Should(gomega.Equal(map[string]struct{}{
+					namespace2.Name: struct{}{},
+				}))
+
+				//case 3. the last egressfirewall with a DNS name gets deleted, deleting the address set and the dns struct, Here I will use the egressFirewall being deleted, there is also the case
+				// that an egressFirewall is updated removing the DNS name which will be handled with the update case. For purposes of testing after the egressFirewall is deleted I will manually delete
+				// the dnsObject which the node would normally do.
+				err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(namespace2.Name).Delete(context.TODO(), egressFirewall2.Name, *metav1.NewDeleteOptions(0))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				name4, _ := addressset.MakeAddressSetName("www.google.com")
+				fakeOVN.asf.EventuallyExpectNoAddressSet(name4)
+				//mimic deleteing the DNSObject this would normally be done by the node doing it here to ensure no panic
+				err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Delete(context.TODO(), dnsObject1.Name, *metav1.NewDeleteOptions(0))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				return nil
+			}
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
@@ -440,6 +709,367 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+		})
+		ginkgo.It("correctly updates an egressfirewall with DNS", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					node1Name string = "node1"
+					fakeUUID2 string = "12345"
+					//a common UUID I will be using for the block commands, just to make life a little easier
+					blockUUID string = "block"
+				)
+				fExec.AddFakeCmdsNoOutputNoError([]string{
+					// egressfirewall adding for namespace1
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == 1.2.3.4/23) && " +
+						"ip4.src == $a10481622940199974102 && ((udp && ( udp.dst == 100 ))) && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9998 match=\"(ip4.dst == $a13161312698469205037) && " +
+						"ip4.src == $a10481622940199974102 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					// egressfirewall adding for namespace2
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == 1.2.3.4/23) && " +
+						"ip4.src == $a4615334824109672969 && ((udp && ( udp.dst == 100 ))) && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace2 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9998 match=\"(ip4.dst == $a13161312698469205037) && ip4.src == $a4615334824109672969 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace2 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+
+					//first update of egressfirewall1
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=10000 match=\"(ip4.dst == 0.0.0.0/0 || ip6.dst == ::/0) && ip4.src == $a10481622940199974102 && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace1-blockAll -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == 1.2.3.4/23) && ip4.src == $a10481622940199974102 && ((udp && ( udp.dst == 100 ))) && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9998 match=\"(ip4.dst == $a13161312698469205037) && ip4.src == $a10481622940199974102 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9997 match=\"(ip4.dst == $a6708137140038977205) && ip4.src == $a10481622940199974102 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+					"ovn-nbctl --timeout=15 lr-policy-del ovn_cluster_router " + fmt.Sprintf("%s", blockUUID),
+
+					//removing egressfirewall1
+					"ovn-nbctl --timeout=15 lr-policy-del ovn_cluster_router " + fmt.Sprintf("%s", fakeUUID),
+					// removing egressfirewall2
+					"ovn-nbctl --timeout=15 lr-policy-del ovn_cluster_router " + fmt.Sprintf("%s", fakeUUID2),
+				})
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					//removing egressfirewall1
+					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find logical_router_policy external-ids:egressFirewall=namespace1-blockAll",
+					Output: fmt.Sprintf("%s", blockUUID),
+				})
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					//removing egressfirewall1
+					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find logical_router_policy external-ids:egressFirewall=namespace1",
+					Output: fmt.Sprintf("%s", fakeUUID),
+				})
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					//removing egressfirewall2
+					Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find logical_router_policy external-ids:egressFirewall=namespace2",
+					Output: fmt.Sprintf("%s", fakeUUID2),
+				})
+				namespace1 := *newNamespace("namespace1")
+				namespace2 := *newNamespace("namespace2")
+				egressFirewall1 := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Deny",
+						Ports: []egressfirewallapi.EgressFirewallPort{
+							{
+								Protocol: "UDP",
+								Port:     100,
+							},
+						},
+						To: egressfirewallapi.EgressFirewallDestination{
+							CIDRSelector: "1.2.3.4/23",
+						},
+					},
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.google.com",
+						},
+					},
+				})
+				egressFirewall2 := newEgressFirewallObject("default", namespace2.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Deny",
+						Ports: []egressfirewallapi.EgressFirewallPort{
+							{
+								Protocol: "UDP",
+								Port:     100,
+							},
+						},
+						To: egressfirewallapi.EgressFirewallDestination{
+							CIDRSelector: "1.2.3.4/23",
+						},
+					},
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.google.com",
+						},
+					},
+				})
+				dnsObject1 := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
+					"www.google.com": dnsobjectapi.DNSObjectEntry{
+						IPAddresses: []string{"1.1.1.1"},
+					},
+				})
+				dnsObject2 := newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
+					"www.google.com": dnsobjectapi.DNSObjectEntry{
+						IPAddresses: []string{"1.1.1.1", "2.2.2.2"},
+					},
+				})
+				fakeOVN.start(ctx,
+					&egressfirewallapi.EgressFirewallList{
+						Items: []egressfirewallapi.EgressFirewall{
+							*egressFirewall1,
+							*egressFirewall2,
+						},
+					},
+					&dnsobjectapi.DNSObjectList{
+						Items: []dnsobjectapi.DNSObject{
+							*dnsObject1,
+							*dnsObject2,
+						},
+					},
+					&v1.NamespaceList{
+						Items: []v1.Namespace{
+							namespace1,
+							namespace2,
+						},
+					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							{
+								Status: v1.NodeStatus{
+									Phase: v1.NodeRunning,
+								},
+								ObjectMeta: newObjectMeta(node1Name, ""),
+							},
+						},
+					})
+				//The cases that need to be delt with
+				// 1. An egressFirewall is updated adding new unique dnsName
+				// 2. An egressFirewall is updated adding new shared dnsName
+				// 3. An egressFirewall is updated removing a unique dnsName
+				// 4. An egressFirewall is updated removing a shared dnsName
+				// 5. A dnsObject is updated adding a new unique ip address for a dnsName
+				// 6. A dnsObject is updated adding a new shared ip address for a dnsName
+				// 7. A dnsObject is updated removing a unique ip address for a dnsName
+				// 8. A dnsObject is updated removing a shared ip address for a dnsName
+
+				//case 1 An egressFirewall is updated adding a new unique dnsName
+				egressFirewall1 = newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+					{
+						Type: "Deny",
+						Ports: []egressfirewallapi.EgressFirewallPort{
+							{
+								Protocol: "UDP",
+								Port:     100,
+							},
+						},
+						To: egressfirewallapi.EgressFirewallDestination{
+							CIDRSelector: "1.2.3.4/23",
+						},
+					},
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.google.com",
+						},
+					},
+					{
+						Type: "Allow",
+						To: egressfirewallapi.EgressFirewallDestination{
+							DNSName: "www.github.com",
+						},
+					},
+				})
+				fakeOVN.controller.WatchNamespaces()
+				fakeOVN.controller.WatchEgressFirewall()
+				fakeOVN.controller.WatchDNSObject()
+				// adding the dnsName www.github.com to egresssfirewall1
+				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall1.Namespace).Update(context.TODO(), egressFirewall1, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				fmt.Printf("KEYWORD: HERE\n")
+				fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.github.com")
+
+				//check that the correct addressSets have been created
+				/*
+					//KEYWORD: NEED TO DEAL WITH A FEW CASES
+					// 1. A DNS OBJECT is deleted (could be part of node delete)
+					// 2. An EgressFirewall gets deleted sharing a dnsName with another EgressFirewall, in that case nothing except the namespace should be deleted
+					// 3. the last egressfirewall with a DNS name gets deleted safely deleting the addressSet
+					fakeOVN.controller.WatchNamespaces()
+					_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall1.Namespace).Get(context.TODO(), egressFirewall1.Name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					fakeOVN.controller.WatchEgressFirewall()
+					fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.google.com")
+					fakeOVN.controller.WatchDNSObject()
+					fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1", "2.2.2.2"})
+					gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name, "node2"}))
+					gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["2.2.2.2"]).To(gomega.Equal([]string{"node2"}))
+					gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
+						namespace1.Name: struct{}{},
+						namespace2.Name: struct{}{},
+					}))
+
+					//case 1: a node gets deleted but nothing with the egressfirewall itself changes
+					err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Delete(context.TODO(), dnsObject2.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					fakeOVN.asf.EventuallyExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1"})
+					gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name}))
+					gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["2.2.2.2"]).To(gomega.BeNil())
+					gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
+						namespace1.Name: struct{}{},
+						namespace2.Name: struct{}{},
+					}))
+
+					//case 2: An egressFirewall gets deleted that shares DNS information with another egressFirewall
+					err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(namespace1.Name).Delete(context.TODO(), egressFirewall1.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal([]string{node1Name}))
+
+					gomega.Eventually(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).Should(gomega.Equal(map[string]struct{}{
+						namespace2.Name: struct{}{},
+					}))
+
+					//case 3. the last egressfirewall with a DNS name gets deleted, deleting the address set and the dns struct, Here I will use the egressFirewall being deleted, there is also the case
+					// that an egressFirewall is updated removing the DNS name which will be handled with the update case. For purposes of testing after the egressFirewall is deleted I will manually delete
+					// the dnsObject which the node would normally do.
+					err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(namespace2.Name).Delete(context.TODO(), egressFirewall2.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					name4, _ := addressset.MakeAddressSetName("www.google.com")
+					fakeOVN.asf.EventuallyExpectNoAddressSet(name4)
+					//mimic deleteing the DNSObject this would normally be done by the node doing it here to ensure no panic
+					err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Delete(context.TODO(), dnsObject1.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				*/
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			/*
+				app.Action = func(ctx *cli.Context) error {
+					const (
+						node1Name string = "node1"
+					)
+					fExec.AddFakeCmdsNoOutputNoError([]string{
+						"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9999 match=\"(ip4.dst == 1.2.3.4/23) && ip4.src == $a10481622940199974102 && ((udp && ( udp.dst == 100 ))) && ip4.dst != 10.128.0.0/14\" action=drop external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+						"ovn-nbctl --timeout=15 --id=@logical_router_policy create logical_router_policy priority=9998 match=\"(ip4.dst == $a13161312698469205037) && ip4.src == $a10481622940199974102 && ip4.dst != 10.128.0.0/14\" action=allow external-ids:egressFirewall=namespace1 -- add logical_router ovn_cluster_router policies @logical_router_policy",
+						"ovn-nbctl --timeout=15 lr-policy-del ovn_cluster_router " + fmt.Sprintf("%s", fakeUUID),
+					})
+					fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+						Cmd:    "ovn-nbctl --timeout=15 --data=bare --no-heading --columns=_uuid find logical_router_policy external-ids:egressFirewall=namespace1",
+						Output: fmt.Sprintf("%s", fakeUUID),
+					})
+					namespace1 := *newNamespace("namespace1")
+					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+						{
+							Type: "Deny",
+							Ports: []egressfirewallapi.EgressFirewallPort{
+								{
+									Protocol: "UDP",
+									Port:     100,
+								},
+							},
+							To: egressfirewallapi.EgressFirewallDestination{
+								CIDRSelector: "1.2.3.4/23",
+							},
+						},
+						{
+							Type: "Allow",
+							To: egressfirewallapi.EgressFirewallDestination{
+								DNSName: "www.google.com",
+							},
+						},
+					})
+					dnsObject1 := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
+						"www.google.com": dnsobjectapi.DNSObjectEntry{
+							Namespaces:  []string{namespace1.Name},
+							IPAddresses: []string{"1.1.1.1"},
+						},
+					})
+					dnsObject2 := newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
+						"www.google.com": dnsobjectapi.DNSObjectEntry{
+							Namespaces:  []string{namespace1.Name},
+							IPAddresses: []string{"2.2.2.2"},
+						},
+					})
+					fakeOVN.start(ctx,
+						&egressfirewallapi.EgressFirewallList{
+							Items: []egressfirewallapi.EgressFirewall{
+								*egressFirewall,
+							},
+						},
+						&dnsobjectapi.DNSObjectList{
+							Items: []dnsobjectapi.DNSObject{
+								*dnsObject1,
+								*dnsObject2,
+							},
+						},
+						&v1.NamespaceList{
+							Items: []v1.Namespace{
+								namespace1,
+							},
+						},
+						&v1.NodeList{
+							Items: []v1.Node{
+								{
+									Status: v1.NodeStatus{
+										Phase: v1.NodeRunning,
+									},
+									ObjectMeta: newObjectMeta(node1Name, ""),
+								},
+							},
+						})
+
+					fakeOVN.controller.WatchNamespaces()
+					_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					fakeOVN.controller.WatchEgressFirewall()
+					fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.google.com")
+					fakeOVN.controller.WatchDNSObject()
+					fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1", "2.2.2.2"})
+
+					//there are many different update situations, I will enumerate each one
+					//1. one of the nodes adds a dns address to its dns resolution (shared and unshared
+					//2. one of the nodes deletes an address from its resolution (shared and unshared)
+					//3. one of the egressFirewalls removes a DNS name (shared and unshared
+					_, err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Update(context.TODO(), newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
+						"www.google.com": dnsobjectapi.DNSObjectEntry{
+							Namespaces:  []string{namespace1.Name},
+							IPAddresses: []string{"2.2.2.2", "3.3.3.3"},
+						},
+					}), metav1.UpdateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					fakeOVN.asf.EventuallyExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"})
+
+					//2. one of the nodes removes a dns address from its dns resolution
+					_, err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Update(context.TODO(), newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
+						"www.google.com": dnsobjectapi.DNSObjectEntry{
+							Namespaces:  []string{namespace1.Name},
+							IPAddresses: []string{"2.2.2.2"},
+						},
+					}), metav1.UpdateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					fakeOVN.asf.EventuallyExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1", "2.2.2.2"})
+
+					err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					//mimic the node deleting the object
+					err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Delete(context.TODO(), dnsObject1.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					gomega.Eventually(fExec.CalledMatchesExpected).Should(gomega.BeTrue(), fExec.ErrorDesc)
+
+					//fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.google.com")
+					err = fakeOVN.fakeClient.DNSObjectClient.K8sV1().DNSObjects().Delete(context.TODO(), dnsObject2.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					name4, name6 := addressset.MakeAddressSetName("www.google.com")
+					fmt.Printf("KEYWORD ABOUT TO CHECK THE ADDRESSSETS EXISTANCE\n")
+					fakeOVN.asf.EventuallyExpectNoAddressSet(name4)
+					fakeOVN.asf.EventuallyExpectNoAddressSet(name6)
+					fmt.Printf("KEYWORD JUST BEFORE THE END\n")
+
+					return nil
+				}
+				err := app.Run([]string{app.Name})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			*/
 		})
 
 	})

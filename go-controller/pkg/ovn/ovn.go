@@ -153,6 +153,10 @@ type Controller struct {
 	// An address set factory that creates address sets
 	addressSetFactory addressset.AddressSetFactory
 
+	// holds the dnsInformation for egressfirewalls indexed by dnsName
+	egressfirewallDNSInfo  map[string]*dnsInformation
+	egressfirewallDNSMutex sync.Mutex
+
 	// Port group for all cluster logical switch ports
 	clusterPortGroupUUID string
 
@@ -261,6 +265,7 @@ func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
 		namespaces:                make(map[string]*namespaceInfo),
 		namespacesMutex:           sync.Mutex{},
 		addressSetFactory:         addressSetFactory,
+		egressfirewallDNSInfo:     make(map[string]*dnsInformation),
 		lspIngressDenyCache:       make(map[string]int),
 		lspEgressDenyCache:        make(map[string]int),
 		lspMutex:                  &sync.Mutex{},
@@ -719,76 +724,87 @@ func (oc *Controller) WatchEgressFirewall() *factory.Handler {
 func (oc *Controller) WatchDNSObject() *factory.Handler {
 	return oc.watchFactory.AddDNSObjectHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			klog.Errorf("KEYWORD: ADDING DNSOBJECT")
 			dnsObject := obj.(*dnsobject.DNSObject)
+			klog.Infof("adding DNSObject %s to the cluster", dnsObject.Name)
 
+			oc.egressfirewallDNSMutex.Lock()
+			defer oc.egressfirewallDNSMutex.Unlock()
 			for dnsName, dnsEntries := range dnsObject.Spec.DNSObjectEntries {
-
-				fmt.Errorf("KEYWORD: %+v", dnsEntries)
 				var ipNet []net.IP
 				for _, ip := range dnsEntries.IPAddresses {
-					klog.Errorf("This is the IP address: %s : %v", ip, net.ParseIP(ip))
+					oc.egressfirewallDNSInfo[dnsName].ipNodes[ip] = append(oc.egressfirewallDNSInfo[dnsName].ipNodes[ip], dnsObject.Name)
 					ipNet = append(ipNet, net.ParseIP(ip))
 				}
 
-				oc.addressSetFactory.NewAddressSet(dnsName, ipNet)
+				oc.egressfirewallDNSInfo[dnsName].as.AddIPs(ipNet)
+
 			}
 
 		},
-		UpdateFunc: func(newer, older interface{}) {
-			klog.Errorf("KEYWORD: UPDATING DNSOBJECT")
-			//figure out if the given dnsNames address has changed
-			//if so figure out the ips to add and remove
-			//addrset = oc.AddressSetFactory.NewAddressSet(name, ipaddresses)
-			//addrset.DeleteIPs(ips to remove)
-
-			// the only time I should delete the addressSet is if the rule is deleted
-			//IPaddresses to add map[string] []net.IP
-			//IPaddresses to rem map[string] []net.IP
+		UpdateFunc: func(older, newer interface{}) {
 			newerDNS := newer.(*dnsobject.DNSObject)
 			olderDNS := older.(*dnsobject.DNSObject)
+			klog.Infof("Updating DNSObject %s", newerDNS.Name)
+			var ipsToAdd []net.IP    // ip addresses that are in the new object but not the old
+			var ipsToRemove []net.IP // ip addresses that are not in the new object but in the old
 
-			for newerDNSName, newerDNSEntries := range newerDNS.Spec.DNSObjectEntries {
-				if _, exists := olderDNS.Spec.DNSObjectEntries[newerDNSName]; !exists {
-					klog.Errorf("KEYWORD: WHAT IS HAPPENING %+v", olderDNS.Spec.DNSObjectEntries[newerDNSName])
-				} else {
-					klog.Errorf("KEYWORD THIS TIME SHOULD GO INTO THE FULL UPDATE")
-				}
-				if _, exists := olderDNS.Spec.DNSObjectEntries[newerDNSName]; !exists {
-					var ipNet []net.IP
-					for _, ip := range newerDNSEntries.IPAddresses {
-						ipNet = append(ipNet, net.ParseIP(ip))
+			for newerDNSName, _ := range newerDNS.Spec.DNSObjectEntries {
+				if _, exists := olderDNS.Spec.DNSObjectEntries[newerDNSName]; exists {
+
+					oldIPs := make(map[string]struct{})
+					newIPs := make(map[string]struct{})
+					for _, newIPAddress := range newerDNS.Spec.DNSObjectEntries[newerDNSName].IPAddresses {
+						newIPs[newIPAddress] = struct{}{}
 					}
-					_, err := oc.addressSetFactory.NewAddressSet(newerDNSName, ipNet)
-					if err != nil {
-						klog.Errorf("KEYWORD: HUBBA WHAA %v", err)
+					for _, oldIPAddress := range olderDNS.Spec.DNSObjectEntries[newerDNSName].IPAddresses {
+						oldIPs[oldIPAddress] = struct{}{}
 					}
-				} else {
-					klog.Errorf("KEYWORD IN THE ELSE: %s", olderDNS.Spec.DNSObjectEntries[newerDNSName])
-					//figure out the delta add then delete
+
+					//need to remove IPs that are in the old set but not in the new set...(KEYWORD NEED TO CHECK FOR DOUBLES)
+					for oldIPAddress, _ := range oldIPs {
+						if _, exists := newIPs[oldIPAddress]; !exists {
+							ipsToRemove = append(ipsToRemove, net.ParseIP(oldIPAddress))
+						}
+					}
+					for newIPAddress, _ := range newIPs {
+						if _, exists := oldIPs[newIPAddress]; !exists {
+							ipsToAdd = append(ipsToAdd, net.ParseIP(newIPAddress))
+						}
+					}
+
 				}
+				oc.egressfirewallDNSInfo[newerDNSName].as.AddIPs(ipsToAdd)
+				oc.egressfirewallDNSInfo[newerDNSName].as.DeleteIPs(ipsToRemove)
+
 			}
-			/*
-				cases
-					case 1: egressDNSEntry in newer and not in older
-						happens when a new egressFirewallDNSName is added as part of rule
-					case 2: egressDNSEntry in older and not in newer
-						when an egressFirewallDNS name is removed from a rule, I think that I can ignore this case because the egressFirewall rule will be deleted...
-					case 3: egressDNSEntry in newer and older they are just different
-			*/
-
-			//newEgressDNSNames()
-
-			//newEgressDNSAddresses
-			//removedDNSNames
-			//removedDNSaddresses
-
-			//for NewerDNSNames, newerDNSEntries := range newerDNS.Spec.DnsObjectEntries {
-			//
-			//}
 		},
 		DeleteFunc: func(obj interface{}) {
-			klog.Errorf("KEYWORD: DELETING DNSOBJECT")
+			//This should not happen often, this should only when a node is deleted
+			dnsObject := obj.(*dnsobject.DNSObject)
+			klog.Infof("Deleting DNSObject %s from cluster", dnsObject.Name)
+
+			for dnsName, dnsObjectEntry := range dnsObject.Spec.DNSObjectEntries {
+				//go through all dnsNames to figure out what to do
+				for _, ipAddr := range dnsObjectEntry.IPAddresses {
+					oc.egressfirewallDNSMutex.Lock()
+					if _, exists := oc.egressfirewallDNSInfo[dnsName]; exists {
+						nodes := oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]
+						for index, node := range nodes {
+							if dnsObject.Name == node {
+								oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr] = append(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][:index], oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][index+1:]...)
+								if len(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]) == 0 {
+									oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
+									delete(oc.egressfirewallDNSInfo[dnsName].ipNodes, ipAddr)
+								}
+								break
+							}
+
+						}
+
+						oc.egressfirewallDNSMutex.Unlock()
+					}
+				}
+			}
 		},
 	}, nil)
 }

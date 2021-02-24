@@ -10,6 +10,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -24,6 +25,16 @@ const (
 	egressFirewallAddError         = "EgressFirewall Rules not correctly added"
 	egressFirewallUpdateError      = "EgressFirewall Rules not correctly updated"
 )
+
+type dnsInformation struct {
+	Namespaces map[string]struct{}
+	as         addressset.AddressSet
+	// stores a list of node names that reported each IP address
+	// Keep this information because more then one node can resolve
+	// a dnsName to the same IP address and if it is only removed from one Node
+	// cannot remove from the whole address set
+	ipNodes map[string][]string
+}
 
 type egressFirewall struct {
 	name        string
@@ -181,16 +192,20 @@ func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.Egr
 		// clear it so an error does not prevent future egressFirewalls
 		for _, rule := range nsInfo.egressFirewallPolicy.egressRules {
 			if len(rule.to.dnsName) > 0 {
-				//deleteDNS = true
-				break
+				oc.egressfirewallDNSMutex.Lock()
+				defer oc.egressfirewallDNSMutex.Unlock()
+				delete(oc.egressfirewallDNSInfo[rule.to.dnsName].Namespaces, egressFirewall.Namespace)
+
+				if len(oc.egressfirewallDNSInfo[rule.to.dnsName].Namespaces) == 0 {
+					// there is no namespace using the egressfirewall rule so it is safe to delete the addressSet
+					oc.egressfirewallDNSInfo[rule.to.dnsName].as.Destroy()
+					delete(oc.egressfirewallDNSInfo, rule.to.dnsName)
+				}
 			}
 		}
 		nsInfo.egressFirewallPolicy = nil
 		nsInfo.Unlock()
 	}
-	//	if deleteDNS {
-	//		oc.egressFirewallDNS.Delete(egressFirewall.Namespace)
-	//}
 
 	return deleteEgressFirewallRules(egressFirewall.Namespace)
 }
@@ -224,32 +239,35 @@ func (oc *Controller) addEgressFirewallRules(hashedAddressSetNameIPv4, hashedAdd
 				matchTargets = []matchTarget{{matchKindV4CIDR, rule.to.cidrSelector}}
 			}
 		} else {
-			//KEYWORD MAKE AN ADDRESS_SET? with a known name...
-			as, err := oc.addressSetFactory.NewAddressSet(rule.to.dnsName, nil)
-			if err != nil {
-				return err
+			klog.Errorf("KEYWORD: RULE.TO.DNSNAME: %s", rule.to.dnsName)
+			var addressSet addressset.AddressSet
+			oc.egressfirewallDNSMutex.Lock()
+			if _, ok := oc.egressfirewallDNSInfo[rule.to.dnsName]; ok {
+				//the dnsName already exists in another addressSet
+				klog.Errorf("KEYWORD THE ADDRESSSET ALREADY EXISTS - %s", rule.to.dnsName)
+				addressSet = oc.egressfirewallDNSInfo[rule.to.dnsName].as
+			} else {
+				klog.Errorf("KEYWORD THE ADDRESSSET DID NOT EXIST - %s", rule.to.dnsName)
+
+				addressSet, err = oc.addressSetFactory.NewAddressSet(rule.to.dnsName, nil)
+				if err != nil {
+					return err
+				}
+				oc.egressfirewallDNSInfo[rule.to.dnsName] = &dnsInformation{
+					as:         addressSet,
+					ipNodes:    make(map[string][]string),
+					Namespaces: make(map[string]struct{})}
 			}
-			dnsNameIPv4ASHashName, dnsNameIPv6ASHashName := as.GetASHashNames()
+			oc.egressfirewallDNSInfo[rule.to.dnsName].Namespaces[namespace] = struct{}{}
+			oc.egressfirewallDNSMutex.Unlock()
+
+			dnsNameIPv4ASHashName, dnsNameIPv6ASHashName := addressSet.GetASHashNames()
 			if dnsNameIPv4ASHashName != "" {
 				matchTargets = append(matchTargets, matchTarget{matchKindV4AddressSet, dnsNameIPv4ASHashName})
 			}
 			if dnsNameIPv6ASHashName != "" {
 				matchTargets = append(matchTargets, matchTarget{matchKindV6AddressSet, dnsNameIPv6ASHashName})
 			}
-			/*
-				// rule based on DNS NAME
-				dnsNameAddressSets, err := oc.egressFirewallDNS.Add(ef.namespace, rule.to.dnsName)
-				if err != nil {
-					return fmt.Errorf("error with EgressFirewallDNS - %v", err)
-				}
-				dnsNameIPv4ASHashName, dnsNameIPv6ASHashName := dnsNameAddressSets.GetASHashNames()
-				if dnsNameIPv4ASHashName != "" {
-					matchTargets = append(matchTargets, matchTarget{matchKindV4AddressSet, dnsNameIPv4ASHashName})
-				}
-				if dnsNameIPv6ASHashName != "" {
-					matchTargets = append(matchTargets, matchTarget{matchKindV6AddressSet, dnsNameIPv6ASHashName})
-				}
-			*/
 		}
 		match := generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, matchTargets, rule.ports)
 		err = createEgressFirewallRules(efStartPriority-rule.id, match, action, ef.namespace)

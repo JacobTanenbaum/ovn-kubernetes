@@ -625,6 +625,11 @@ func (wf *WatchFactory) GetDNSObject(name string) (*dnsobjectapi.DNSObject, erro
 	return dnsObjectLister.Get(name)
 }
 
+func (wf *WatchFactory) GetDNSObjects() ([]*dnsobjectapi.DNSObject, error) {
+	dnsObjectLister := wf.informers[dnsObjectType].lister.(dnsobjectlister.DNSObjectLister)
+	return dnsObjectLister.List(labels.Everything())
+}
+
 func (wf *WatchFactory) NodeInformer() cache.SharedIndexInformer {
 	return wf.informers[nodeType].inf
 }
