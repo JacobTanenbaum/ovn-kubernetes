@@ -732,7 +732,11 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 			for dnsName, dnsEntries := range dnsObject.Spec.DNSObjectEntries {
 				var ipNet []net.IP
 				for _, ip := range dnsEntries.IPAddresses {
-					oc.egressfirewallDNSInfo[dnsName].ipNodes[ip] = append(oc.egressfirewallDNSInfo[dnsName].ipNodes[ip], dnsObject.Name)
+					//oc.egressfirewallDNSInfo[dnsName].ipNodes[ip] = append(oc.egressfirewallDNSInfo[dnsName].ipNodes[ip], dnsObject.Name)
+					if oc.egressfirewallDNSInfo[dnsName].ipNodes[ip] == nil {
+						oc.egressfirewallDNSInfo[dnsName].ipNodes[ip] = make(map[string]struct{})
+					}
+					oc.egressfirewallDNSInfo[dnsName].ipNodes[ip][dnsObject.Name] = struct{}{}
 					ipNet = append(ipNet, net.ParseIP(ip))
 				}
 
@@ -745,10 +749,11 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 			newerDNS := newer.(*dnsobject.DNSObject)
 			olderDNS := older.(*dnsobject.DNSObject)
 			klog.Infof("Updating DNSObject %s", newerDNS.Name)
-			var ipsToAdd []net.IP    // ip addresses that are in the new object but not the old
-			var ipsToRemove []net.IP // ip addresses that are not in the new object but in the old
 
 			for newerDNSName, _ := range newerDNS.Spec.DNSObjectEntries {
+				var ipsToAdd []net.IP    // ip addresses that are in the new object but not the old
+				var ipsToRemove []net.IP // ip addresses that are not in the new object but in the old
+
 				if _, exists := olderDNS.Spec.DNSObjectEntries[newerDNSName]; exists {
 
 					oldIPs := make(map[string]struct{})
@@ -772,9 +777,30 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 						}
 					}
 
+				} else {
+					for _, ip := range newerDNS.Spec.DNSObjectEntries[newerDNSName].IPAddresses {
+						ipsToAdd = append(ipsToAdd, net.ParseIP(ip))
+					}
 				}
+				oc.egressfirewallDNSMutex.Lock()
 				oc.egressfirewallDNSInfo[newerDNSName].as.AddIPs(ipsToAdd)
+				//could have done this above but would need to hold the lock longer
+				for _, ip := range ipsToAdd {
+
+					if oc.egressfirewallDNSInfo[newerDNSName].ipNodes[ip.String()] == nil {
+						oc.egressfirewallDNSInfo[newerDNSName].ipNodes[ip.String()] = make(map[string]struct{})
+					}
+					oc.egressfirewallDNSInfo[newerDNSName].ipNodes[ip.String()][newerDNS.Name] = struct{}{}
+				}
+				for index, ip := range ipsToRemove {
+					delete(oc.egressfirewallDNSInfo[newerDNSName].ipNodes[ip.String()], newerDNS.Name)
+					//if there is another Node that is reporting this IP address do not remove it
+					if len(oc.egressfirewallDNSInfo[newerDNSName].ipNodes[ip.String()]) > 0 {
+						ipsToRemove = append(ipsToRemove[:index], ipsToRemove[index+1:]...)
+					}
+				}
 				oc.egressfirewallDNSInfo[newerDNSName].as.DeleteIPs(ipsToRemove)
+				oc.egressfirewallDNSMutex.Unlock()
 
 			}
 		},
@@ -788,21 +814,26 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 				for _, ipAddr := range dnsObjectEntry.IPAddresses {
 					oc.egressfirewallDNSMutex.Lock()
 					if _, exists := oc.egressfirewallDNSInfo[dnsName]; exists {
-						nodes := oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]
-						for index, node := range nodes {
-							if dnsObject.Name == node {
-								oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr] = append(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][:index], oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][index+1:]...)
-								if len(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]) == 0 {
-									oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
-									delete(oc.egressfirewallDNSInfo[dnsName].ipNodes, ipAddr)
-								}
-								break
-							}
-
+						delete(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr], dnsObject.Name)
+						if len(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]) == 0 {
+							oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
+							delete(oc.egressfirewallDNSInfo[dnsName].ipNodes, ipAddr)
 						}
-
-						oc.egressfirewallDNSMutex.Unlock()
+						//nodes := oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]
+						//						for index, node := range nodes {
+						//							if dnsObject.Name == node {
+						//								oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr] = append(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][:index], oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][index+1:]...)
+						//								if len(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]) == 0 {
+						//									oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
+						//									delete(oc.egressfirewallDNSInfo[dnsName].ipNodes, ipAddr)
+						//								}
+						//								break
+						//							}
+						//
 					}
+
+					oc.egressfirewallDNSMutex.Unlock()
+					//	}
 				}
 			}
 		},

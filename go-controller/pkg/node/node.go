@@ -44,6 +44,7 @@ type OvnNode struct {
 	Kube              kube.Interface
 	watchFactory      factory.NodeWatchFactory
 	egressFirewallDNS *egressfirewalldns.EgressDNS
+	dnsNameNamespaces map[string]map[string]struct{}
 	stopChan          chan struct{}
 	recorder          record.EventRecorder
 	gateway           Gateway

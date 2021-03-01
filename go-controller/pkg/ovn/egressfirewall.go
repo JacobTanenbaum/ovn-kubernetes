@@ -29,11 +29,13 @@ const (
 type dnsInformation struct {
 	Namespaces map[string]struct{}
 	as         addressset.AddressSet
-	// stores a list of node names that reported each IP address
+	// stores a map of node names that reported each IP address
 	// Keep this information because more then one node can resolve
 	// a dnsName to the same IP address and if it is only removed from one Node
 	// cannot remove from the whole address set
-	ipNodes map[string][]string
+
+	//by using a map with empty struct makes it easier to find the node names as needed
+	ipNodes map[string]map[string]struct{}
 }
 
 type egressFirewall struct {
@@ -193,14 +195,15 @@ func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.Egr
 		for _, rule := range nsInfo.egressFirewallPolicy.egressRules {
 			if len(rule.to.dnsName) > 0 {
 				oc.egressfirewallDNSMutex.Lock()
-				defer oc.egressfirewallDNSMutex.Unlock()
 				delete(oc.egressfirewallDNSInfo[rule.to.dnsName].Namespaces, egressFirewall.Namespace)
 
 				if len(oc.egressfirewallDNSInfo[rule.to.dnsName].Namespaces) == 0 {
 					// there is no namespace using the egressfirewall rule so it is safe to delete the addressSet
 					oc.egressfirewallDNSInfo[rule.to.dnsName].as.Destroy()
+					fmt.Printf("KEYWORD: THIS IS WHERE WE ARE NOW\n")
 					delete(oc.egressfirewallDNSInfo, rule.to.dnsName)
 				}
+				oc.egressfirewallDNSMutex.Unlock()
 			}
 		}
 		nsInfo.egressFirewallPolicy = nil
@@ -239,25 +242,24 @@ func (oc *Controller) addEgressFirewallRules(hashedAddressSetNameIPv4, hashedAdd
 				matchTargets = []matchTarget{{matchKindV4CIDR, rule.to.cidrSelector}}
 			}
 		} else {
-			klog.Errorf("KEYWORD: RULE.TO.DNSNAME: %s", rule.to.dnsName)
 			var addressSet addressset.AddressSet
 			oc.egressfirewallDNSMutex.Lock()
 			if _, ok := oc.egressfirewallDNSInfo[rule.to.dnsName]; ok {
 				//the dnsName already exists in another addressSet
-				klog.Errorf("KEYWORD THE ADDRESSSET ALREADY EXISTS - %s", rule.to.dnsName)
 				addressSet = oc.egressfirewallDNSInfo[rule.to.dnsName].as
 			} else {
-				klog.Errorf("KEYWORD THE ADDRESSSET DID NOT EXIST - %s", rule.to.dnsName)
 
 				addressSet, err = oc.addressSetFactory.NewAddressSet(rule.to.dnsName, nil)
 				if err != nil {
+					oc.egressfirewallDNSMutex.Unlock()
 					return err
 				}
 				oc.egressfirewallDNSInfo[rule.to.dnsName] = &dnsInformation{
 					as:         addressSet,
-					ipNodes:    make(map[string][]string),
+					ipNodes:    make(map[string]map[string]struct{}),
 					Namespaces: make(map[string]struct{})}
 			}
+
 			oc.egressfirewallDNSInfo[rule.to.dnsName].Namespaces[namespace] = struct{}{}
 			oc.egressfirewallDNSMutex.Unlock()
 
