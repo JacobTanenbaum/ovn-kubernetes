@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -308,33 +309,82 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 func (n *OvnNode) WatchEgressFirewalls() {
 	n.watchFactory.AddEgressFirewallHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			//figure out if there is already a dns object for this node
-			//dnsObject, err := n.watchFactory.GetDNSObject(n.name)
-			//if err != nil && !(errors.IsNotFound(err) || errors.IsAlreadyExists(err)) {
-			//	klog.Errorf("failed to get dnsobject for this node, %v", err)
-			//	return
-			//}
-			//			if dnsObject == nil {
-			//				_, err := n.Kube.CreateDNSObject(
-			//					&dnsobjectapi.DNSObject{
-			//						ObjectMeta: metav1.ObjectMeta{Name: n.name},
-			//						Spec:       dnsobjectapi.DNSObjectSpec{},
-			//					},
-			//				)
-			//				if err != nil {
-			//					klog.Errorf("KEYWORD: %v", err)
-			//				}
-			//
-			//			} else {
-			//				klog.Errorf("KEYWORD ALREADY HAVE ONE")
-			//			}
+			fmt.Printf("KEYWORD: THIS IS STARTING TO WORK\n\n\n")
+			// grab just the DNSNames from the egressFirewall (and namespace)
+			egressFirewall := obj.(*egressfirewall.EgressFirewall)
+			var dnsNames []string
 
-			//Work on adding the DNSName()
-			egressFirewall := obj.(*egressfirewall.EgressFirewall).DeepCopy()
-			n.egressFirewallDNS.Add(egressFirewall)
+			// loop through all rules
+			for _, rule := range egressFirewall.Spec.Egress {
+				//we only care if there are DNSNames associated with the egressFirewall Rule
+				if len(rule.To.DNSName) > 0 {
+					dnsNames = append(dnsNames, rule.To.DNSName)
+
+				}
+			}
+			n.egressFirewallDNS.Add(dnsNames, egressFirewall.Namespace)
+
 		},
-		UpdateFunc: func(old, new interface{}) {},
-		DeleteFunc: func(obj interface{}) {},
+		UpdateFunc: func(old, newer interface{}) {
+			// What can happen on an update?
+			// an egressFirewall adds a dnsName in which case it should call n.egressFirewallDNS.Add()
+			// an egressFirewall removes a dnsName in which case there should be an n.egressFirewallDNS.Remove
+			// thats it compare the old and new objects
+			// if there is a dnsName in the newer that is not in old - call Delete()
+			// if there is a dnsName in the old but not in newer - call Delete() Remove should deal with only the namespace or the actual thing...
+			newerEgressFirewall := newer.(*egressfirewall.EgressFirewall)
+			olderEgressFirewall := old.(*egressfirewall.EgressFirewall)
+			newerDNSNames := make(map[string]struct{})
+			olderDNSNames := make(map[string]struct{})
+			// get all the dnsNames in the new version of the egressFirewall
+			klog.Infof("Updating EgressFirewall %s in namespace %s", newerEgressFirewall.Name, newerEgressFirewall.Namespace)
+			for _, rule := range newerEgressFirewall.Spec.Egress {
+				if len(rule.To.DNSName) > 0 {
+					newerDNSNames[rule.To.DNSName] = struct{}{}
+
+				}
+			}
+			// get all the dnsNames from the old version of the egressfirewall
+			for _, rule := range olderEgressFirewall.Spec.Egress {
+				olderDNSNames[rule.To.DNSName] = struct{}{}
+			}
+			// to the node the only thing that matters is the presence of the dnsName in order to resolve, unlike on the master the order does not matter
+			// shortcut in case something else changes on the egressFirewall besides the dnsNames
+			if reflect.DeepEqual(newerDNSNames, olderDNSNames) {
+				return
+			}
+
+			var dnsNamesToAdd []string
+			var dnsNamesToRemove []string
+			for newDNSName, _ := range newerDNSNames {
+				if _, exists := olderDNSNames[newDNSName]; !exists {
+					// the dnsName is present in the new version but not in the old so it needs to be added to the dns resolver
+					dnsNamesToAdd = append(dnsNamesToAdd, newDNSName)
+				}
+			}
+			for oldDNSName, _ := range olderDNSNames {
+				// the dnsName is present in the old version but not in the new version so it needs to be removed from the resolver
+				if _, exists := newerDNSNames[oldDNSName]; !exists {
+					dnsNamesToRemove = append(dnsNamesToRemove, oldDNSName)
+				}
+			}
+			n.egressFirewallDNS.Add(dnsNamesToAdd, newerEgressFirewall.Namespace)
+			fmt.Printf("KEYWORD: DNSNAMES TO REMOVE-- %+v\n", dnsNamesToRemove)
+			n.egressFirewallDNS.Remove(dnsNamesToRemove, newerEgressFirewall.Namespace)
+
+		},
+		DeleteFunc: func(obj interface{}) {
+			egressFirewall := obj.(*egressfirewall.EgressFirewall)
+			klog.Infof("Deleteing EgressFirewall %s in namespace %s", egressFirewall.Name, egressFirewall.Namespace)
+			var dnsNames []string
+			for _, rule := range egressFirewall.Spec.Egress {
+				if len(rule.To.DNSName) > 0 {
+					dnsNames = append(dnsNames, rule.To.DNSName)
+				}
+			}
+			n.egressFirewallDNS.Remove(dnsNames, egressFirewall.Namespace)
+
+		},
 	}, nil)
 
 }

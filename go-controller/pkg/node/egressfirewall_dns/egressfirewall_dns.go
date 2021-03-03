@@ -1,7 +1,7 @@
 package egressfirewalldns
 
 import (
-	//	"fmt"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -12,7 +12,6 @@ import (
 
 	dnsobject "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
 	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
-	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 
 	errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,8 +41,8 @@ type EgressDNS struct {
 
 type dnsEntry struct {
 	// the current IP addresses the dnsName resolves to
-	// NOTE: used for testing
 	dnsResolves []net.IP
+	namespaces  map[string]struct{} //the namespaces that this DNSName applies to
 }
 
 type dnsNamespace struct {
@@ -72,34 +71,46 @@ func NewEgressDNS(nodeName string, watchFactory factory.NodeWatchFactory, k kube
 	return egressDNS, nil
 }
 
-func (e *EgressDNS) Add(egressfirewall *egressfirewall.EgressFirewall) error {
-	//KEYWORD: don't think I need the locking?
+func (e *EgressDNS) Add(dnsNames []string, namespace string) error {
 	klog.Errorf("KEYWORD WHAT IS HAPPENING")
 	e.lock.Lock()
 	defer e.lock.Unlock()
-	klog.Errorf("KEYWORD: HERE")
-
-	for _, egressFirewallRule := range egressfirewall.Spec.Egress {
-		if egressFirewallRule.To.DNSName != "" {
-			klog.Errorf("KEYWORD: THIS IS A DNS ONE with name %s", egressFirewallRule.To.DNSName)
-			if _, exists := e.dnsEntries[egressFirewallRule.To.DNSName]; !exists {
-				e.dnsEntries[egressFirewallRule.To.DNSName] = &dnsEntry{}
-				e.signalAdded(dnsNamespace{dnsName: egressFirewallRule.To.DNSName, namespace: egressfirewall.Namespace})
-			} else {
-				klog.Errorf("KEYWORD: ALREADY HERE BEFORE NOT ADDING HUMPH")
-				//add the new namespace to the dnsObject
-				dnsObject, err := e.wf.GetDNSObject(e.nodeName)
-				if err != nil {
-					return err
-				}
-				entry := dnsObject.Spec.DNSObjectEntries[egressFirewallRule.To.DNSName]
-				entry.Namespaces = append(entry.Namespaces, egressfirewall.Namespace)
-				dnsObject.Spec.DNSObjectEntries[egressFirewallRule.To.DNSName] = entry
-				e.k.UpdateDNSObject(dnsObject)
+	for _, dnsName := range dnsNames {
+		if _, exists := e.dnsEntries[dnsName]; !exists {
+			e.dnsEntries[dnsName] = &dnsEntry{
+				namespaces: map[string]struct{}{
+					namespace: struct{}{},
+				},
 			}
+
+			e.signalAdded(dnsNamespace{dnsName: dnsName, namespace: namespace})
+		} else {
+			// only need to add the namespace to the struct
+			e.dnsEntries[dnsName].namespaces[namespace] = struct{}{}
 		}
 	}
-
+	/*
+		for _, egressFirewallRule := range egressfirewall.Spec.Egress {
+			if egressFirewallRule.To.DNSName != "" {
+				klog.Errorf("KEYWORD: THIS IS A DNS ONE with name %s", egressFirewallRule.To.DNSName)
+				if _, exists := e.dnsEntries[egressFirewallRule.To.DNSName]; !exists {
+					e.dnsEntries[egressFirewallRule.To.DNSName] = &dnsEntry{}
+					e.signalAdded(dnsNamespace{dnsName: egressFirewallRule.To.DNSName, namespace: egressfirewall.Namespace})
+				} else {
+					klog.Errorf("KEYWORD: ALREADY HERE BEFORE NOT ADDING HUMPH")
+					//add the new namespace to the dnsObject
+					dnsObject, err := e.wf.GetDNSObject(e.nodeName)
+					if err != nil {
+						return err
+					}
+					entry := dnsObject.Spec.DNSObjectEntries[egressFirewallRule.To.DNSName]
+					entry.Namespaces = append(entry.Namespaces, egressfirewall.Namespace)
+					dnsObject.Spec.DNSObjectEntries[egressFirewallRule.To.DNSName] = entry
+					e.k.UpdateDNSObject(dnsObject)
+				}
+			}
+		}
+	*/
 	return nil
 
 }
@@ -108,28 +119,41 @@ func (e *EgressDNS) updateEntryForName(dnsNamespace dnsNamespace) error {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 	ips := e.dns.GetIPs(dnsNamespace.dnsName)
+	//TODO: if the old and new resolutions are the same should not update the dnsObject
 	e.dnsEntries[dnsNamespace.dnsName].dnsResolves = ips
 
-	klog.Errorf("KEYWORD THESE ARE THE IPS FOR %s: %s", dnsNamespace.dnsName, e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
+	//klog.Errorf("KEYWORD THESE ARE THE IPS FOR %s: %s", dnsNamespace.dnsName, e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
 	//update the dnsObject
 	dnsObject, err := e.wf.GetDNSObject(e.nodeName)
-	if err != nil && !(errors.IsNotFound(err) || errors.IsAlreadyExists(err)) {
-		return err
-	}
 	existed := true
-	if dnsObject == nil {
-		existed = false
+	if errors.IsNotFound(err) {
+		// the object *MOST LIKELY* has not been created yet
 		dnsObject = &dnsobjectapi.DNSObject{
 			ObjectMeta: metav1.ObjectMeta{Name: e.nodeName},
 			Spec:       dnsobjectapi.DNSObjectSpec{},
 		}
+		existed = false
+	} else if err != nil {
+		return err
 	}
+
+	//if err != nil && !(errors.IsNotFound(err) || errors.IsAlreadyExists(err)) {
+	//	return err
+	//}
+	//existed := true
+	//if dnsObject == nil {
+	//	existed = false
+	//	dnsObject = &dnsobjectapi.DNSObject{
+	//		ObjectMeta: metav1.ObjectMeta{Name: e.nodeName},
+	//		Spec:       dnsobjectapi.DNSObjectSpec{},
+	//	}
+	//}
 	var ipStrings []string
 	klog.Errorf("KEYWORD got the dnsobject %s", dnsObject.Name)
 	if e.dnsEntries[dnsNamespace.dnsName] == nil {
 		klog.Errorf("KEYWORD: WHY IS THIS NUL e.dnsEntries[dnsName]")
 	}
-	klog.Errorf("KEYWORD WHAT IS HAPPENING WITH THIS: %s", e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
+	//klog.Errorf("KEYWORD WHAT IS HAPPENING WITH THIS: %s", e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
 	for _, ip := range e.dnsEntries[dnsNamespace.dnsName].dnsResolves {
 		klog.Errorf("KEYWORD CONVERTING %s to string", ip)
 		ipStrings = append(ipStrings, ip.String())
@@ -141,24 +165,25 @@ func (e *EgressDNS) updateEntryForName(dnsNamespace dnsNamespace) error {
 
 	dnsObjectEntry := dnsObject.Spec.DNSObjectEntries[dnsNamespace.dnsName]
 	dnsObjectEntry.IPAddresses = ipStrings
-	if len(dnsNamespace.namespace) != 0 {
-		inList := false
-		for _, namespace := range dnsObjectEntry.Namespaces {
-			if namespace == dnsNamespace.namespace {
-				inList = true
-				break
-			}
-
-		}
-		if !inList {
-			dnsObjectEntry.Namespaces = append(dnsObjectEntry.Namespaces, dnsNamespace.namespace)
-		}
-	}
+	//if len(dnsNamespace.namespace) != 0 {
+	//	inList := false
+	//	for _, namespace := range dnsObjectEntry.Namespaces {
+	//		if namespace == dnsNamespace.namespace {
+	//			inList = true
+	//			break
+	//		}
+	//
+	//		}
+	//		if !inList {
+	//			dnsObjectEntry.Namespaces = append(dnsObjectEntry.Namespaces, dnsNamespace.namespace)
+	//		}
+	//	}
 	dnsObject.Spec.DNSObjectEntries[dnsNamespace.dnsName] = dnsObjectEntry
 
 	if existed {
 		e.k.UpdateDNSObject(dnsObject)
 	} else {
+		fmt.Printf("KEYWORD: %+v\n", dnsObject)
 		e.k.CreateDNSObject(dnsObject)
 	}
 
@@ -211,38 +236,46 @@ func (e *EgressDNS) Run(defaultInterval time.Duration) {
 			case <-e.controllerStop:
 				return
 			}
-			/*
-				klog.Errorf("KEYWORD WHAT IS THE DNSNAME: %s", dnsName)
 
-				//update the dnsObject
-				dnsObject, err := e.wf.GetDNSObject(e.nodeName)
-				if err != nil {
-					utilruntime.HandleError(err)
-				}
-				var ipStrings []string
-				klog.Errorf("KEYWORD got the dnsobject %s", dnsObject.Name)
-				if e.dnsEntries[dnsName] == nil {
-					klog.Errorf("KEYWORD: WHY IS THIS NUL e.dnsEntries[dnsName]")
-				}
-				klog.Errorf("KEYWORD WHAT IS HAPPENING WITH THIS: %s", e.dnsEntries[dnsName].dnsResolves)
-				for _, ip := range e.dnsEntries[dnsName].dnsResolves {
-					klog.Errorf("KEYWORD CONVERTING %s to string", ip)
-					ipStrings = append(ipStrings, ip.String())
-				}
-
-				dnsObject.Spec.DNSObjectEntries[e.nodeName].NodeIPEntries[dnsName] = ipStrings
-				e.k.UpdateDNSObject(dnsObject)
-			*/
 			// before waiting on the signals get the next time this thread needs to wake up
 			ttl, dnsNamespace.dnsName, timeSet = e.dns.GetNextQueryTime()
-			dnsNamespace.namespace = ""
 			if time.Until(ttl) > defaultInterval || !timeSet {
 				durationTillNextQuery = defaultInterval
 			} else {
 				durationTillNextQuery = time.Until(ttl)
+				fmt.Printf("KEYWORD: durationTillNextQuery: %d\n", durationTillNextQuery.Round(time.Second))
 			}
+			dnsNamespace.namespace = ""
 		}
 	}()
+
+}
+
+func (e *EgressDNS) Remove(dnsNames []string, namespace string) error {
+	e.lock.Lock()
+	defer e.lock.Unlock()
+	fmt.Printf("KEYWORD: blah blah blah \n\n\n")
+
+	for _, dnsName := range dnsNames {
+		fmt.Printf("KEYWORD: Removeing things for this dnsName: %s\n", dnsName)
+		delete(e.dnsEntries[dnsName].namespaces, namespace)
+		if len(e.dnsEntries[dnsName].namespaces) == 0 {
+			e.dns.Delete(dnsName)
+			delete(e.dnsEntries, dnsName)
+			dnsObject, err := e.wf.GetDNSObject(e.nodeName)
+			if err != nil {
+				return err
+			}
+			if _, exists := dnsObject.Spec.DNSObjectEntries[dnsName]; exists {
+				delete(dnsObject.Spec.DNSObjectEntries, dnsName)
+				e.k.UpdateDNSObject(dnsObject)
+
+			}
+
+		}
+
+	}
+	return nil
 
 }
 
@@ -264,4 +297,22 @@ func (e *EgressDNS) Shutdown() {
 
 func (e *EgressDNS) signalAdded(dnsNS dnsNamespace) {
 	e.added <- dnsNS
+}
+
+// *** Functions below are used for testing purposes only ***
+
+// returns the fields of a dnsEntry for a given name
+func (e *EgressDNS) GetDNSEntry(dnsName string) ([]net.IP, []string, bool) {
+	e.lock.Lock()
+	defer e.lock.Unlock()
+	var namespaces []string
+	if dnsEntry, exists := e.dnsEntries[dnsName]; exists {
+		for namespace, _ := range dnsEntry.namespaces {
+			namespaces = append(namespaces, namespace)
+		}
+
+		return dnsEntry.dnsResolves, namespaces, true
+	}
+	return nil, nil, false
+
 }
