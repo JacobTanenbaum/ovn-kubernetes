@@ -82,35 +82,13 @@ func (e *EgressDNS) Add(dnsNames []string, namespace string) error {
 					namespace: struct{}{},
 				},
 			}
-
 			e.signalAdded(dnsNamespace{dnsName: dnsName, namespace: namespace})
 		} else {
 			// only need to add the namespace to the struct
 			e.dnsEntries[dnsName].namespaces[namespace] = struct{}{}
 		}
 	}
-	/*
-		for _, egressFirewallRule := range egressfirewall.Spec.Egress {
-			if egressFirewallRule.To.DNSName != "" {
-				klog.Errorf("KEYWORD: THIS IS A DNS ONE with name %s", egressFirewallRule.To.DNSName)
-				if _, exists := e.dnsEntries[egressFirewallRule.To.DNSName]; !exists {
-					e.dnsEntries[egressFirewallRule.To.DNSName] = &dnsEntry{}
-					e.signalAdded(dnsNamespace{dnsName: egressFirewallRule.To.DNSName, namespace: egressfirewall.Namespace})
-				} else {
-					klog.Errorf("KEYWORD: ALREADY HERE BEFORE NOT ADDING HUMPH")
-					//add the new namespace to the dnsObject
-					dnsObject, err := e.wf.GetDNSObject(e.nodeName)
-					if err != nil {
-						return err
-					}
-					entry := dnsObject.Spec.DNSObjectEntries[egressFirewallRule.To.DNSName]
-					entry.Namespaces = append(entry.Namespaces, egressfirewall.Namespace)
-					dnsObject.Spec.DNSObjectEntries[egressFirewallRule.To.DNSName] = entry
-					e.k.UpdateDNSObject(dnsObject)
-				}
-			}
-		}
-	*/
+	fmt.Printf("KEYWORD: returning from Add\n")
 	return nil
 
 }
@@ -124,7 +102,9 @@ func (e *EgressDNS) updateEntryForName(dnsNamespace dnsNamespace) error {
 
 	//klog.Errorf("KEYWORD THESE ARE THE IPS FOR %s: %s", dnsNamespace.dnsName, e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
 	//update the dnsObject
+	fmt.Printf("KEYWORD HAS A THING\n")
 	dnsObject, err := e.wf.GetDNSObject(e.nodeName)
+	fmt.Printf("KEYWORD HAS A THING\n")
 	existed := true
 	if errors.IsNotFound(err) {
 		// the object *MOST LIKELY* has not been created yet
@@ -257,7 +237,6 @@ func (e *EgressDNS) Remove(dnsNames []string, namespace string) error {
 	fmt.Printf("KEYWORD: blah blah blah \n\n\n")
 
 	for _, dnsName := range dnsNames {
-		fmt.Printf("KEYWORD: Removeing things for this dnsName: %s\n", dnsName)
 		delete(e.dnsEntries[dnsName].namespaces, namespace)
 		if len(e.dnsEntries[dnsName].namespaces) == 0 {
 			e.dns.Delete(dnsName)
