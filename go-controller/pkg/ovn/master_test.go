@@ -1046,7 +1046,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			dnsObjectFakeClient := &dnsobjectfake.Clientset{}
-			crdFakeClient := &apiextensionsfake.Clientset{}
+			crdFakeClient := apiextensionsfake.NewSimpleClientset()
 			egressIPFakeClient := &egressipfake.Clientset{}
 			fakeClient := &util.OVNClientset{
 				KubeClient:           kubeFakeClient,
@@ -1445,7 +1445,7 @@ func TestController_allocateNodeSubnets(t *testing.T) {
 			defer close(stopChan)
 			kubeFakeClient := fake.NewSimpleClientset()
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
-			crdFakeClient := &apiextensionsfake.Clientset{}
+			crdFakeClient := apiextensionsfake.NewSimpleClientset()
 			egressIPFakeClient := &egressipfake.Clientset{}
 			fakeClient := &util.OVNClientset{
 				KubeClient:           kubeFakeClient,

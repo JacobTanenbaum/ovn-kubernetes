@@ -6,7 +6,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
-	apiextensionsapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	apiextensionsapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 // ObjectCacheInterface represents the exported methods for getting

@@ -2,7 +2,6 @@ package node
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"time"
 
@@ -195,7 +194,6 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 
 		}
 		Expect(1).To(Equal(1))
-		fmt.Printf("KEYWORD: TEMP\n")
 		err := app.Run([]string{app.Name})
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -261,7 +259,6 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			}).Should(BeTrue())
 			dnsObject, err := fakeNode.node.watchFactory.GetDNSObject(nodeName)
 			Expect(err).NotTo(HaveOccurred())
-			fmt.Printf("KEYWORD: %+v\n", dnsObject)
 			Expect(areTwoStringSlicesTheSame(dnsObject.Spec.DNSObjectEntries[dnsName].IPAddresses, []string{resolvedIP})).To(Equal(true))
 
 			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -339,7 +336,6 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			}).Should(BeTrue())
 			dnsObject, err := fakeNode.node.watchFactory.GetDNSObject(nodeName)
 			Expect(err).NotTo(HaveOccurred())
-			fmt.Printf("KEYWORD: %+v\n", dnsObject)
 			Expect(areTwoStringSlicesTheSame(dnsObject.Spec.DNSObjectEntries[dnsName].IPAddresses, []string{resolvedIP})).To(Equal(true))
 
 			Eventually(func() bool {
@@ -349,7 +345,6 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			}).Should(BeTrue())
 			dnsObject, err = fakeNode.node.watchFactory.GetDNSObject(nodeName)
 			Expect(err).NotTo(HaveOccurred())
-			fmt.Printf("KEYWORD: %+v\n", dnsObject)
 			Expect(areTwoStringSlicesTheSame(dnsObject.Spec.DNSObjectEntries[dnsName].IPAddresses, []string{resolvedIPUpdate})).To(Equal(true))
 
 			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -538,7 +533,6 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 
 			// case 1: changing the egressFirewall so that there is no change to the dnsNames, should not change the dnsObject or the internal egressDNS struct
 			egressFirewall.Spec.Egress[0].Type = "Deny"
-			fmt.Printf("KEYWORD: egressFirewall -- %+v\n\n", egressFirewall)
 			_, err = fakeNode.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Update(context.TODO(), egressFirewall, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() bool {

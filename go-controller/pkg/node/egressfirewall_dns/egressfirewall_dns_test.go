@@ -343,14 +343,9 @@ func TestDelete(t *testing.T) {
 			}
 			res.Remove([]string{test1DNSName}, "addNamespace")
 			for stay, timeout := true, time.After(10*time.Second); stay; {
-				//fmt.Printf("KEYWORD: res.dnsEntries[test1DNSName] = %+v\n", res.dnsEntries[test1DNSName])
 				if _, exists := res.dnsEntries[test1DNSName]; !exists {
 					break
 				}
-				//_, dnsResolves = res.getDNSEntry(tc.dnsName)
-				//if dnsResolves == nil {
-				//	break
-				//}
 				select {
 				case <-timeout:
 					stay = false

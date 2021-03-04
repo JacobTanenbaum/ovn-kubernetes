@@ -309,7 +309,6 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 func (n *OvnNode) WatchEgressFirewalls() {
 	n.watchFactory.AddEgressFirewallHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			fmt.Printf("KEYWORD: THIS IS STARTING TO WORK\n\n\n")
 			// grab just the DNSNames from the egressFirewall (and namespace)
 			egressFirewall := obj.(*egressfirewall.EgressFirewall)
 			var dnsNames []string
@@ -369,7 +368,6 @@ func (n *OvnNode) WatchEgressFirewalls() {
 				}
 			}
 			n.egressFirewallDNS.Add(dnsNamesToAdd, newerEgressFirewall.Namespace)
-			fmt.Printf("KEYWORD: DNSNAMES TO REMOVE-- %+v\n", dnsNamesToRemove)
 			n.egressFirewallDNS.Remove(dnsNamesToRemove, newerEgressFirewall.Namespace)
 
 		},

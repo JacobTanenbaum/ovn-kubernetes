@@ -765,7 +765,6 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 						oldIPs[oldIPAddress] = struct{}{}
 					}
 
-					//need to remove IPs that are in the old set but not in the new set...(KEYWORD NEED TO CHECK FOR DOUBLES)
 					for oldIPAddress, _ := range oldIPs {
 						if _, exists := newIPs[oldIPAddress]; !exists {
 							ipsToRemove = append(ipsToRemove, net.ParseIP(oldIPAddress))
