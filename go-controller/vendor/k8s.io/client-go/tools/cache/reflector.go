@@ -135,6 +135,7 @@ func DefaultWatchErrorHandler(r *Reflector, err error) {
 	case err == io.ErrUnexpectedEOF:
 		klog.V(1).Infof("%s: Watch for %v closed with unexpected EOF: %v", r.name, r.expectedTypeName, err)
 	default:
+		panic("@thedisco")
 		utilruntime.HandleError(fmt.Errorf("%s: Failed to watch %v: %v", r.name, r.expectedTypeName, err))
 	}
 }

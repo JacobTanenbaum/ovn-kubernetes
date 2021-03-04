@@ -809,33 +809,21 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 			dnsObject := obj.(*dnsobject.DNSObject)
 			klog.Infof("Deleting DNSObject %s from cluster", dnsObject.Name)
 
+			oc.egressfirewallDNSMutex.Lock()
 			for dnsName, dnsObjectEntry := range dnsObject.Spec.DNSObjectEntries {
 				//go through all dnsNames to figure out what to do
 				for _, ipAddr := range dnsObjectEntry.IPAddresses {
-					oc.egressfirewallDNSMutex.Lock()
 					if _, exists := oc.egressfirewallDNSInfo[dnsName]; exists {
 						delete(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr], dnsObject.Name)
 						if len(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]) == 0 {
 							oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
 							delete(oc.egressfirewallDNSInfo[dnsName].ipNodes, ipAddr)
 						}
-						//nodes := oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]
-						//						for index, node := range nodes {
-						//							if dnsObject.Name == node {
-						//								oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr] = append(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][:index], oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr][index+1:]...)
-						//								if len(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]) == 0 {
-						//									oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
-						//									delete(oc.egressfirewallDNSInfo[dnsName].ipNodes, ipAddr)
-						//								}
-						//								break
-						//							}
-						//
 					}
 
-					oc.egressfirewallDNSMutex.Unlock()
-					//	}
 				}
 			}
+			oc.egressfirewallDNSMutex.Unlock()
 		},
 	}, nil)
 }

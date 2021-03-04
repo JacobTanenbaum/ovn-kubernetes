@@ -200,7 +200,6 @@ func (oc *Controller) deleteEgressFirewall(egressFirewall *egressfirewallapi.Egr
 				if len(oc.egressfirewallDNSInfo[rule.to.dnsName].Namespaces) == 0 {
 					// there is no namespace using the egressfirewall rule so it is safe to delete the addressSet
 					oc.egressfirewallDNSInfo[rule.to.dnsName].as.Destroy()
-					fmt.Printf("KEYWORD: THIS IS WHERE WE ARE NOW\n")
 					delete(oc.egressfirewallDNSInfo, rule.to.dnsName)
 				}
 				oc.egressfirewallDNSMutex.Unlock()

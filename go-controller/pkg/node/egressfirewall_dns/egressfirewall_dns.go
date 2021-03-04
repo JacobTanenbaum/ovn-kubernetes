@@ -197,11 +197,11 @@ func (e *EgressDNS) Run(defaultInterval time.Duration) {
 				if err := e.updateEntryForName(dnsNamespace); err != nil {
 					utilruntime.HandleError(err)
 				}
-				if e.dnsEntries[dnsNamespace.dnsName] == nil {
-					klog.Errorf("KEYWORD: WHY IS THIS nil e.dnsEntries[dnsName]")
-				} else {
-					klog.Errorf("KEYWORD DUH IT ISNT e.dnsEntries[%s] = %s", dnsNamespace.dnsName, e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
-				}
+				//if e.dnsEntries[dnsNamespace.dnsName] == nil {
+				//	klog.Errorf("KEYWORD: WHY IS THIS nil e.dnsEntries[dnsName]")
+				//} else {
+				//	klog.Errorf("KEYWORD DUH IT ISNT e.dnsEntries[%s] = %s", dnsNamespace.dnsName, e.dnsEntries[dnsNamespace.dnsName].dnsResolves)
+				//}
 			case <-time.After(durationTillNextQuery):
 				if len(dnsNamespace.dnsName) > 0 {
 					if _, err := e.Update(dnsNamespace.dnsName); err != nil {
