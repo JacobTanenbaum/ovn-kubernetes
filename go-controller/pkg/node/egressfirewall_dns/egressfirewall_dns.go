@@ -78,7 +78,7 @@ func (e *EgressDNS) Add(dnsNames []string, namespace string) error {
 		if _, exists := e.dnsEntries[dnsName]; !exists {
 			e.dnsEntries[dnsName] = &dnsEntry{
 				namespaces: map[string]struct{}{
-					namespace: struct{}{},
+					namespace: {},
 				},
 			}
 			e.signalAdded(dnsNamespace{dnsName: dnsName, namespace: namespace})
@@ -252,7 +252,7 @@ func (e *EgressDNS) GetDNSEntry(dnsName string) ([]net.IP, []string, bool) {
 	defer e.lock.Unlock()
 	var namespaces []string
 	if dnsEntry, exists := e.dnsEntries[dnsName]; exists {
-		for namespace, _ := range dnsEntry.namespaces {
+		for namespace := range dnsEntry.namespaces {
 			namespaces = append(namespaces, namespace)
 		}
 

@@ -778,7 +778,7 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 	return oc.watchFactory.AddDNSObjectHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			dnsObject := obj.(*dnsobject.DNSObject)
-			klog.Infof("adding DNSObject %s to the cluster", dnsObject.Name)
+			klog.Infof("Adding DNSObject %s to the cluster", dnsObject.Name)
 
 			oc.egressfirewallDNSMutex.Lock()
 			defer oc.egressfirewallDNSMutex.Unlock()
@@ -806,7 +806,7 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 			olderDNS := older.(*dnsobject.DNSObject)
 			klog.Infof("Updating DNSObject %s", newerDNS.Name)
 
-			for newerDNSName, _ := range newerDNS.Spec.DNSObjectEntries {
+			for newerDNSName := range newerDNS.Spec.DNSObjectEntries {
 				var ipsToAdd []net.IP    // ip addresses that are in the new object but not the old
 				var ipsToRemove []net.IP // ip addresses that are not in the new object but in the old
 
@@ -821,12 +821,12 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 						oldIPs[oldIPAddress] = struct{}{}
 					}
 
-					for oldIPAddress, _ := range oldIPs {
+					for oldIPAddress := range oldIPs {
 						if _, exists := newIPs[oldIPAddress]; !exists {
 							ipsToRemove = append(ipsToRemove, net.ParseIP(oldIPAddress))
 						}
 					}
-					for newIPAddress, _ := range newIPs {
+					for newIPAddress := range newIPs {
 						if _, exists := oldIPs[newIPAddress]; !exists {
 							ipsToAdd = append(ipsToAdd, net.ParseIP(newIPAddress))
 						}

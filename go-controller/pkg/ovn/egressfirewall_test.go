@@ -206,7 +206,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 					},
 				})
 				dnsObject := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})
@@ -244,10 +244,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1"})
 				//verify that the egressfirewallDNSInfo struct is correct
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal(map[string]struct{}{
-					node1Name: struct{}{},
+					node1Name: {},
 				}))
 				gomega.Eventually(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).Should(gomega.Equal(map[string]struct{}{
-					egressFirewall.Namespace: struct{}{},
+					egressFirewall.Namespace: {},
 				}))
 
 				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
@@ -354,7 +354,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 					},
 				})
 				dnsObject := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})
@@ -395,10 +395,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1"})
 				//verify that the egressfirewallDNSInfo struct is correct
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal(map[string]struct{}{
-					node1Name: struct{}{},
+					node1Name: {},
 				}))
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
-					namespace1.Name: struct{}{},
+					namespace1.Name: {},
 				}))
 
 				gomega.Eventually(fExec.CalledMatchesExpected).Should(gomega.BeTrue(), fExec.ErrorDesc)
@@ -546,12 +546,12 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 					},
 				})
 				dnsObject1 := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})
 				dnsObject2 := newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1", "2.2.2.2"},
 					},
 				})
@@ -593,15 +593,15 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				fakeOVN.controller.WatchDNSObject()
 				fakeOVN.asf.ExpectAddressSetWithIPs("www.google.com", []string{"1.1.1.1", "2.2.2.2"})
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal(map[string]struct{}{
-					node1Name: struct{}{},
-					"node2":   struct{}{},
+					node1Name: {},
+					"node2":   {},
 				}))
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["2.2.2.2"]).To(gomega.Equal(map[string]struct{}{
-					"node2": struct{}{},
+					"node2": {},
 				}))
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
-					namespace1.Name: struct{}{},
-					namespace2.Name: struct{}{},
+					namespace1.Name: {},
+					namespace2.Name: {},
 				}))
 
 				//case 1: a node gets deleted but nothing with the egressfirewall itself changes
@@ -612,13 +612,13 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 
 				fakeOVN.controller.egressfirewallDNSMutex.Lock()
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal(map[string]struct{}{
-					node1Name: struct{}{},
+					node1Name: {},
 				}))
 
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["2.2.2.2"]).To(gomega.BeNil())
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
-					namespace1.Name: struct{}{},
-					namespace2.Name: struct{}{},
+					namespace1.Name: {},
+					namespace2.Name: {},
 				}))
 				fakeOVN.controller.egressfirewallDNSMutex.Unlock()
 
@@ -629,7 +629,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 
 				fakeOVN.controller.egressfirewallDNSMutex.Lock()
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.google.com"].ipNodes["1.1.1.1"]).To(gomega.Equal(map[string]struct{}{
-					node1Name: struct{}{},
+					node1Name: {},
 				}))
 				fakeOVN.controller.egressfirewallDNSMutex.Unlock()
 
@@ -861,12 +861,12 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 					},
 				})
 				dnsObject1 := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})
 				dnsObject2 := newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1", "2.2.2.2"},
 					},
 				})
@@ -967,25 +967,25 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				fakeOVN.asf.EventuallyExpectEmptyAddressSet("www.github.com")
 				fakeOVN.controller.egressfirewallDNSMutex.Lock()
 				gomega.Expect(fakeOVN.controller.egressfirewallDNSInfo["www.github.com"].Namespaces).To(gomega.Equal(map[string]struct{}{
-					namespace1.Name: struct{}{},
+					namespace1.Name: {},
 				}))
 				fakeOVN.controller.egressfirewallDNSMutex.Unlock()
 
 				//in a real cluster the node would update the dns object I will simulate that by manually updating
 				// both my DNS objects will update
 				dnsObject1 = newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1"},
 					},
-					"www.github.com": dnsobjectapi.DNSObjectEntry{
+					"www.github.com": {
 						IPAddresses: []string{"9.9.9.9", "8.8.8.8"},
 					},
 				})
 				dnsObject2 = newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1", "2.2.2.2"},
 					},
-					"www.github.com": dnsobjectapi.DNSObjectEntry{
+					"www.github.com": {
 						IPAddresses: []string{"9.9.9.9", "4.4.4.4"},
 					},
 				})
@@ -1213,12 +1213,12 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 
 				//becuase the egressfirewall was updated the nodes would update the dnsObjects so I will simulate that here
 				dnsObject1 = newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})
 				dnsObject2 = newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1", "2.2.2.2"},
 					},
 				})
@@ -1239,7 +1239,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				// case 5: A dnsObject is updated adding a new unique ip address for a dnsName
 				//no ovn commands for case 5
 				dnsObject1 = newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1", "3.3.3.3"},
 					},
 				})
@@ -1279,7 +1279,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				// no ovn commands for case 6
 
 				dnsObject2 = newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"},
 					},
 				})
@@ -1307,7 +1307,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				// case 7: A dnsObject is updated removing a unique ip address for a dnsName
 				// no ovn commands for case 7
 				dnsObject2 = newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1", "3.3.3.3"},
 					},
 				})
@@ -1328,7 +1328,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				// case 8: A dnsObject is updated removing a shared ip address for a dnsName
 				// no ovn commands for case 8
 				dnsObject2 = newDNSObject("node2", map[string]dnsobjectapi.DNSObjectEntry{
-					"www.google.com": dnsobjectapi.DNSObjectEntry{
+					"www.google.com": {
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})

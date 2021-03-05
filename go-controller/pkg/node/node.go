@@ -330,7 +330,7 @@ func (n *OvnNode) WatchCRD() {
 					n.egressFirewallHandler = n.WatchEgressFirewall()
 					n.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(n.name, n.watchFactory, n.Kube, make(chan struct{}))
 					if err != nil {
-						klog.Errorf("egressfirewall could not start properly on %s", n.name)
+						klog.Errorf("Egressfirewall could not start properly on %s", n.name)
 						return
 					}
 					n.egressFirewallDNS.Run(egressFirewallDNSDefaultDuration)
@@ -430,13 +430,13 @@ func (n *OvnNode) WatchEgressFirewall() *factory.Handler {
 
 			var dnsNamesToAdd []string
 			var dnsNamesToRemove []string
-			for newDNSName, _ := range newerDNSNames {
+			for newDNSName := range newerDNSNames {
 				if _, exists := olderDNSNames[newDNSName]; !exists {
 					// the dnsName is present in the new version but not in the old so it needs to be added to the dns resolver
 					dnsNamesToAdd = append(dnsNamesToAdd, newDNSName)
 				}
 			}
-			for oldDNSName, _ := range olderDNSNames {
+			for oldDNSName := range olderDNSNames {
 				// the dnsName is present in the old version but not in the new version so it needs to be removed from the resolver
 				if _, exists := newerDNSNames[oldDNSName]; !exists {
 					dnsNamesToRemove = append(dnsNamesToRemove, oldDNSName)
