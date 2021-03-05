@@ -186,7 +186,7 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			fakeNode.node.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(nodeName, fakeNode.node.watchFactory, fakeNode.node.Kube, fakeNode.stopChan)
 			fakeNode.node.egressFirewallDNS.Run(30)
 			Expect(err).NotTo(HaveOccurred())
-			fakeNode.node.WatchEgressFirewalls()
+			fakeNode.node.WatchEgressFirewall()
 
 			time.Sleep(2 * time.Second)
 			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -250,7 +250,7 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			fakeNode.node.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(nodeName, fakeNode.node.watchFactory, fakeNode.node.Kube, fakeNode.stopChan)
 			fakeNode.node.egressFirewallDNS.Run(30 * time.Minute)
 			Expect(err).NotTo(HaveOccurred())
-			fakeNode.node.WatchEgressFirewalls()
+			fakeNode.node.WatchEgressFirewall()
 
 			Eventually(func() bool {
 				ips, namespaces, _ := fakeNode.node.egressFirewallDNS.GetDNSEntry(dnsName)
@@ -327,7 +327,7 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			fakeNode.node.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(nodeName, fakeNode.node.watchFactory, fakeNode.node.Kube, fakeNode.stopChan)
 			fakeNode.node.egressFirewallDNS.Run(30 * time.Minute)
 			Expect(err).NotTo(HaveOccurred())
-			fakeNode.node.WatchEgressFirewalls()
+			fakeNode.node.WatchEgressFirewall()
 
 			Eventually(func() bool {
 				ips, namespaces, _ := fakeNode.node.egressFirewallDNS.GetDNSEntry(dnsName)
@@ -417,7 +417,7 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			fakeNode.node.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(nodeName, fakeNode.node.watchFactory, fakeNode.node.Kube, fakeNode.stopChan)
 			fakeNode.node.egressFirewallDNS.Run(30 * time.Minute)
 			Expect(err).NotTo(HaveOccurred())
-			fakeNode.node.WatchEgressFirewalls()
+			fakeNode.node.WatchEgressFirewall()
 
 			Eventually(func() bool {
 				ips, namespaces, _ := fakeNode.node.egressFirewallDNS.GetDNSEntry(dnsName)
@@ -443,10 +443,10 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 				return exists
 			}).Should(BeFalse())
 			dnsObject, err = fakeNode.node.watchFactory.GetDNSObject(nodeName)
-			Expect(err).NotTo(HaveOccurred())
+			//there will be an error becuase the object no longer exists
+			Expect(err).To(HaveOccurred())
 
-			_, exists := dnsObject.Spec.DNSObjectEntries[dnsName]
-			Expect(exists).To(BeFalse())
+			Expect(dnsObject).To(BeNil())
 
 			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 			return nil
@@ -515,7 +515,7 @@ var _ = Describe("Node EgressFirewall Operations", func() {
 			fakeNode.node.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(nodeName, fakeNode.node.watchFactory, fakeNode.node.Kube, fakeNode.stopChan)
 			fakeNode.node.egressFirewallDNS.Run(30 * time.Minute)
 			Expect(err).NotTo(HaveOccurred())
-			fakeNode.node.WatchEgressFirewalls()
+			fakeNode.node.WatchEgressFirewall()
 
 			Eventually(func() bool {
 				ips, namespaces, _ := fakeNode.node.egressFirewallDNS.GetDNSEntry(dnsName1)

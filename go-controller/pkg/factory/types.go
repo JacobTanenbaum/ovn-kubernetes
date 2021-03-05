@@ -35,6 +35,8 @@ type NodeWatchFactory interface {
 	GetCRD(name string) (*apiextensionsapi.CustomResourceDefinition, error)
 	GetDNSObject(name string) (*dnsobjectapi.DNSObject, error)
 	AddEgressFirewallHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
+	RemoveEgressFirewallHandler(handler *Handler)
+	AddCRDHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	AddServiceHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	AddFilteredServiceHandler(namespace string, handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	RemoveServiceHandler(handler *Handler)

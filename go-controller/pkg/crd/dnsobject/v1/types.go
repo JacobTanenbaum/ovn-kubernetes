@@ -30,7 +30,6 @@ type DNSObjectSpec struct {
 }
 
 type DNSObjectEntry struct {
-	Namespaces  []string `json:"namespaces,omitempty"`
 	IPAddresses []string `json:"ipAddresses,omitempty"`
 }
 

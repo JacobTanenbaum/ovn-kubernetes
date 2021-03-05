@@ -207,7 +207,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				})
 				dnsObject := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
 					"www.google.com": dnsobjectapi.DNSObjectEntry{
-						Namespaces:  []string{namespace1.Name},
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})
@@ -356,7 +355,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 				})
 				dnsObject := newDNSObject(node1Name, map[string]dnsobjectapi.DNSObjectEntry{
 					"www.google.com": dnsobjectapi.DNSObjectEntry{
-						Namespaces:  []string{namespace1.Name},
 						IPAddresses: []string{"1.1.1.1"},
 					},
 				})

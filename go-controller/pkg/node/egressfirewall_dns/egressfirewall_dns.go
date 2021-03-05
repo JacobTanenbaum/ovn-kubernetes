@@ -15,6 +15,7 @@ import (
 	errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/klog/v2"
 )
 
 type EgressDNS struct {
@@ -32,6 +33,7 @@ type EgressDNS struct {
 
 	// Report change when Add operation is done
 	added          chan dnsNamespace
+	removed        chan string
 	stopChan       chan struct{}
 	controllerStop <-chan struct{}
 }
@@ -61,6 +63,7 @@ func NewEgressDNS(nodeName string, watchFactory factory.NodeWatchFactory, k kube
 		k:          k,
 
 		added:          make(chan dnsNamespace, 1),
+		removed:        make(chan string, 1),
 		stopChan:       make(chan struct{}),
 		controllerStop: controllerStop,
 	}
@@ -122,9 +125,12 @@ func (e *EgressDNS) updateEntryForName(dnsNamespace dnsNamespace) error {
 	dnsObject.Spec.DNSObjectEntries[dnsNamespace.dnsName] = dnsObjectEntry
 
 	if existed {
-		e.k.UpdateDNSObject(dnsObject)
+		err = e.k.UpdateDNSObject(dnsObject)
 	} else {
-		e.k.CreateDNSObject(dnsObject)
+		_, err = e.k.CreateDNSObject(dnsObject)
+	}
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -166,6 +172,9 @@ func (e *EgressDNS) Run(defaultInterval time.Duration) {
 						utilruntime.HandleError(err)
 					}
 				}
+			case dnsName := <-e.removed:
+				// when there is a dnsName removed the query time should be updated
+				e.dns.Delete(dnsName)
 			case <-e.stopChan:
 				return
 			case <-e.controllerStop:
@@ -192,15 +201,27 @@ func (e *EgressDNS) Remove(dnsNames []string, namespace string) error {
 	for _, dnsName := range dnsNames {
 		delete(e.dnsEntries[dnsName].namespaces, namespace)
 		if len(e.dnsEntries[dnsName].namespaces) == 0 {
-			e.dns.Delete(dnsName)
 			delete(e.dnsEntries, dnsName)
+			e.signalRemoved(dnsName)
 			dnsObject, err := e.wf.GetDNSObject(e.nodeName)
 			if err != nil {
 				return err
 			}
 			if _, exists := dnsObject.Spec.DNSObjectEntries[dnsName]; exists {
 				delete(dnsObject.Spec.DNSObjectEntries, dnsName)
-				e.k.UpdateDNSObject(dnsObject)
+				if len(dnsObject.Spec.DNSObjectEntries) == 0 {
+					klog.Infof("Deleteing DNSObject %s from the cluster", dnsObject.Name)
+					err := e.k.DeleteDNSObject(dnsObject.Name)
+					if err != nil {
+						return err
+					}
+
+				} else {
+					err := e.k.UpdateDNSObject(dnsObject)
+					if err != nil {
+						return err
+					}
+				}
 
 			}
 
@@ -211,20 +232,12 @@ func (e *EgressDNS) Remove(dnsNames []string, namespace string) error {
 
 }
 
-/*
-func (e *EgressDNS) updateEntryForName(dnsName string) error {
-	e.lock.Lock()
-	defer e.lock.Unlock()
-	ips := e.dns.GetIPs(dnsName)
-
-	fmt.Printf("IPs from %s are %s", e.nodeName, ips)
-	e.dnsEntries[dnsName].dnsResolves = ips
-
-	return nil
-}
-*/
 func (e *EgressDNS) Shutdown() {
 	close(e.stopChan)
+}
+
+func (e *EgressDNS) signalRemoved(dnsName string) {
+	e.removed <- dnsName
 }
 
 func (e *EgressDNS) signalAdded(dnsNS dnsNamespace) {

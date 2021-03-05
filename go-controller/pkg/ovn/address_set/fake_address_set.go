@@ -102,8 +102,6 @@ func (f *FakeAddressSetFactory) removeAddressSet(name string) {
 // ExpectNoAddressSet ensures the named address set does not exist
 func (f *FakeAddressSetFactory) ExpectNoAddressSet(name string) {
 	_, ok := f.sets[name]
-	if ok {
-	}
 	gomega.Expect(ok).To(gomega.BeFalse())
 }
 
@@ -169,11 +167,7 @@ func (f *FakeAddressSetFactory) ExpectAddressSetWithIPsBool(name string, ips []s
 			}
 		}
 	}
-	if lenAddressSet != len(ips) {
-		return false
-	}
-	return true
-
+	return lenAddressSet == len(ips)
 }
 
 // EventuallyExpectAddressSetWithIPs ensures that the named addressset exists and will have the given set of ips
@@ -209,11 +203,7 @@ func (f *FakeAddressSetFactory) EventuallyExpectAddressSetWithIPs(name string, i
 				}
 			}
 		}
-		if lenAddressSet != len(ips) {
-			return false
-		}
-		return true
-
+		return lenAddressSet == len(ips)
 	}, 2).Should(gomega.BeTrue())
 }
 

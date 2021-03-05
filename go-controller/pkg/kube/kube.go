@@ -39,6 +39,7 @@ type Interface interface {
 	GetEndpoint(namespace, name string) (*kapi.Endpoints, error)
 	CreateEndpoint(namespace string, ep *kapi.Endpoints) (*kapi.Endpoints, error)
 	CreateDNSObject(dnsObject *dnsobject.DNSObject) (*dnsobject.DNSObject, error)
+	DeleteDNSObject(name string) error
 	Events() kv1core.EventInterface
 }
 
@@ -216,6 +217,11 @@ func (k *Kube) CreateEndpoint(namespace string, ep *kapi.Endpoints) (*kapi.Endpo
 // CreateDNSObject creates the dnsObject resource
 func (k *Kube) CreateDNSObject(dnsObject *dnsobject.DNSObject) (*dnsobject.DNSObject, error) {
 	return k.DNSObjectClient.K8sV1().DNSObjects().Create(context.TODO(), dnsObject, metav1.CreateOptions{})
+}
+
+// DeleteDNSObject deletes a dnsObject resource
+func (k *Kube) DeleteDNSObject(name string) error {
+	return k.DNSObjectClient.K8sV1().DNSObjects().Delete(context.TODO(), name, *metav1.NewDeleteOptions(0))
 }
 
 // Events returns events to use when creating an EventSinkImpl

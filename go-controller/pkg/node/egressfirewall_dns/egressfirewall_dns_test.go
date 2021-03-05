@@ -362,6 +362,118 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// test what happens when the last dns name is deleted from the EgressFirewall
+// discovered while manually testing that a segfault could happen if the entry that is
+// the next to refresh is deleted before the refresh occurs
+func TestDeleteWithDNSRefresh(t *testing.T) {
+	mockDnsOps := new(util_mocks.DNSOps)
+	util.SetDNSLibOpsMockInst(mockDnsOps)
+	nodeName := "Node1"
+	fakeClient := &util.OVNClientset{
+		KubeClient:           fake.NewSimpleClientset(),
+		EgressIPClient:       egressipfake.NewSimpleClientset(),
+		EgressFirewallClient: egressfirewallfake.NewSimpleClientset(),
+		DNSObjectClient:      dnsobjectfake.NewSimpleClientset(),
+		APIExtensionsClient:  apiextensionsfake.NewSimpleClientset(),
+	}
+
+	factory, _ := factory.NewNodeWatchFactory(fakeClient, nodeName)
+	factory.InitializeEgressFirewallWatchFactory()
+	test1DNSName := "www.test.com"
+	test1IPv4 := "2.2.2.2"
+	//test1IPv6 := "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+	tests := []struct {
+		desc                     string
+		errExp                   bool
+		dnsName                  string
+		configIPv4               bool
+		configIPv6               bool
+		testingUpdateOnQueryTime bool
+		syncTime                 time.Duration
+		waitForSyncLoop          bool
+		dnsOpsMockHelper         []ovntest.TestifyMockHelper
+	}{
+		{
+			desc:                     "EgressFirewall Delete functions, avoids segfault when deleting dns names",
+			errExp:                   false,
+			syncTime:                 5 * time.Minute,
+			dnsName:                  test1DNSName,
+			testingUpdateOnQueryTime: false,
+			configIPv4:               true,
+			configIPv6:               false,
+
+			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
+				{"ClientConfigFromFile", []string{"string"}, []interface{}{&dns.ClientConfig{
+					Servers: []string{"1.1.1.1"},
+					Port:    "1234"}, nil}, 0, 1},
+				{"Fqdn", []string{"string"}, []interface{}{test1DNSName}, 0, 1},
+				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{&dns.Msg{}}, 0, 1},
+				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "1")}}, 1 * time.Second, nil}, 0, 1},
+			},
+		},
+	}
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			testCh := make(chan struct{})
+			config.IPv4Mode = tc.configIPv4
+			config.IPv6Mode = tc.configIPv6
+
+			for _, item := range tc.dnsOpsMockHelper {
+				call := mockDnsOps.On(item.OnCallMethodName)
+				for _, arg := range item.OnCallMethodArgType {
+					call.Arguments = append(call.Arguments, mock.AnythingOfType(arg))
+				}
+				for _, ret := range item.RetArgList {
+					call.ReturnArguments = append(call.ReturnArguments, ret)
+				}
+				call.Once()
+			}
+			res, err := NewEgressDNS(nodeName, factory, &kube.Kube{KClient: fakeClient.KubeClient, DNSObjectClient: fakeClient.DNSObjectClient}, testCh)
+
+			t.Log(res, err)
+			err = res.Add([]string{test1DNSName}, "addNamespace")
+			if tc.errExp {
+				assert.Error(t, err)
+			} else {
+				res.Run(tc.syncTime)
+				assert.Nil(t, err)
+				for stay, timeout := true, time.After(10*time.Second); stay; {
+					_, dnsResolves := res.getDNSEntry(tc.dnsName)
+					if dnsResolves != nil {
+						break
+					}
+					select {
+					case <-timeout:
+						stay = false
+						t.Errorf("timeout: it is taking too long for the goroutine to complete")
+					default:
+					}
+
+				}
+			}
+			res.Remove([]string{test1DNSName}, "addNamespace")
+			for stay, timeout := true, time.After(10*time.Second); stay; {
+				if _, exists := res.dnsEntries[test1DNSName]; !exists {
+					break
+				}
+				select {
+				case <-timeout:
+					stay = false
+					t.Errorf("timeout: dns is taking to long for the goroutine to update the dns object")
+				default:
+				}
+			}
+
+			assert.Equal(t, len(res.dnsEntries), 0)
+			//the segfault would occur before the below timeout
+			time.Sleep(2 * time.Second)
+
+			close(testCh)
+			mockDnsOps.AssertExpectations(t)
+		})
+	}
+}
+
 func (e *EgressDNS) getDNSEntry(dnsName string) (map[string]struct{}, []net.IP) {
 	e.lock.Lock()
 	defer e.lock.Unlock()

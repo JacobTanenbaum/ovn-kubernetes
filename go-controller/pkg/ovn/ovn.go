@@ -26,7 +26,7 @@ import (
 	dnsobject "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
 	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 
-	apiextension "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	apiextension "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	utilnet "k8s.io/utils/net"
 
 	kapi "k8s.io/api/core/v1"
@@ -46,10 +46,10 @@ import (
 )
 
 const (
-	egressfirewallCRD                string        = "egressfirewalls.k8s.ovn.org"
-	clusterPortGroupName             string        = "clusterPortGroup"
-	clusterRtrPortGroupName          string        = "clusterRtrPortGroup"
-	egressFirewallDNSDefaultDuration time.Duration = 30 * time.Minute
+	egressfirewallCRD       string = "egressfirewalls.k8s.ovn.org"
+	dnsObjectCRD            string = "dnsobjects.k8s.ovn.org"
+	clusterPortGroupName    string = "clusterPortGroup"
+	clusterRtrPortGroupName string = "clusterRtrPortGroup"
 )
 
 // loadBalancerConf contains the OVN based config for a LB
@@ -153,6 +153,8 @@ type Controller struct {
 	// An address set factory that creates address sets
 	addressSetFactory addressset.AddressSetFactory
 
+	// if the required CRDs are in the system enable egressfirewall
+	egressfirewallEnabled bool
 	// holds the dnsInformation for egressfirewalls indexed by dnsName
 	egressfirewallDNSInfo  map[string]*dnsInformation
 	egressfirewallDNSMutex sync.Mutex
@@ -265,6 +267,7 @@ func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
 		namespaces:                make(map[string]*namespaceInfo),
 		namespacesMutex:           sync.Mutex{},
 		addressSetFactory:         addressSetFactory,
+		egressfirewallEnabled:     false,
 		egressfirewallDNSInfo:     make(map[string]*dnsInformation),
 		lspIngressDenyCache:       make(map[string]int),
 		lspEgressDenyCache:        make(map[string]int),
@@ -644,29 +647,79 @@ func (oc *Controller) WatchCRD() {
 		AddFunc: func(obj interface{}) {
 			crd := obj.(*apiextension.CustomResourceDefinition)
 			klog.Infof("Adding CRD %s to cluster", crd.Name)
-			if crd.Name == egressfirewallCRD {
-				err := oc.watchFactory.InitializeEgressFirewallWatchFactory()
-				if err != nil {
-					klog.Errorf("Error Creating EgressFirewallWatchFactory: %v", err)
+			// currrently the only reason we watch crds is to determine if the watchers for egressfirewall
+			// should be running
+			if oc.egressfirewallEnabled {
+				return
+			}
+			existingCRDs, err := oc.watchFactory.GetCRDS()
+			if err != nil {
+				klog.Errorf("Error getting CRDs in the cluster: %v", err)
+				return
+			}
+			isEgressFirewallCRD := false
+			isDNSObjectCRD := false
+			for _, existingCRD := range existingCRDs {
+				if existingCRD.Name == egressfirewallCRD ||
+					crd.Name == egressfirewallCRD {
+					isEgressFirewallCRD = true
+				}
+				if existingCRD.Name == dnsObjectCRD ||
+					crd.Name == dnsObjectCRD {
+					isDNSObjectCRD = true
+				}
+				if isDNSObjectCRD && isEgressFirewallCRD {
+					err := oc.watchFactory.InitializeEgressFirewallWatchFactory()
+					if err != nil {
+						klog.Errorf("Error Creating EgressFirewallWatchFactory: %v", err)
+						return
+					}
+					oc.egressfirewallEnabled = true
+					klog.Infof("Enabling EgressFirewall")
+					oc.egressFirewallHandler = oc.WatchEgressFirewall()
+					oc.dnsObjectHandler = oc.WatchDNSObject()
 					return
 				}
-
-				oc.egressFirewallHandler = oc.WatchEgressFirewall()
-				oc.dnsObjectHandler = oc.WatchDNSObject()
-
 			}
+
 		},
 		UpdateFunc: func(old, newer interface{}) {
 		},
 		DeleteFunc: func(obj interface{}) {
 			crd := obj.(*apiextension.CustomResourceDefinition)
 			klog.Infof("Deleting CRD %s from cluster", crd.Name)
-			if crd.Name == egressfirewallCRD {
-				//oc.egressFirewallDNS.Shutdown()
-				oc.watchFactory.RemoveEgressFirewallHandler(oc.egressFirewallHandler)
-				oc.egressFirewallHandler = nil
-				oc.watchFactory.ShutdownEgressFirewallWatchFactory()
+			// if the egressFirewall is already shutdown we don't care about other crds
+			if !oc.egressfirewallEnabled {
+				return
 			}
+
+			existingCRDs, err := oc.watchFactory.GetCRDS()
+			if err != nil {
+				klog.Errorf("Error getting CRDs in the cluster: %v", err)
+				return
+			}
+			isEgressFirewallCRD := false
+			isDNSObjectCRD := false
+			for _, existingCRD := range existingCRDs {
+				if existingCRD.Name == egressfirewallCRD ||
+					crd.Name == egressfirewallCRD {
+					isEgressFirewallCRD = true
+				}
+				if existingCRD.Name == dnsObjectCRD ||
+					crd.Name == dnsObjectCRD {
+					isDNSObjectCRD = true
+				}
+				if !isDNSObjectCRD || !isEgressFirewallCRD {
+					klog.Infof("Disabling EgressFirewall")
+					oc.egressfirewallEnabled = false
+					oc.watchFactory.RemoveEgressFirewallHandler(oc.egressFirewallHandler)
+					oc.watchFactory.RemoveDNSObjectHandler(oc.dnsObjectHandler)
+					oc.egressFirewallHandler = nil
+					oc.dnsObjectHandler = nil
+
+				}
+			}
+
 		},
 	}, nil)
 }
@@ -740,7 +793,10 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 					ipNet = append(ipNet, net.ParseIP(ip))
 				}
 
-				oc.egressfirewallDNSInfo[dnsName].as.AddIPs(ipNet)
+				err := oc.egressfirewallDNSInfo[dnsName].as.AddIPs(ipNet)
+				if err != nil {
+					klog.Errorf("Error adding IPs to addressSet for dnsName %s: %v", dnsName, err)
+				}
 
 			}
 
@@ -782,7 +838,10 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 					}
 				}
 				oc.egressfirewallDNSMutex.Lock()
-				oc.egressfirewallDNSInfo[newerDNSName].as.AddIPs(ipsToAdd)
+				err := oc.egressfirewallDNSInfo[newerDNSName].as.AddIPs(ipsToAdd)
+				if err != nil {
+					klog.Errorf("Error adding IPs to addressSet for dnsName %s as part of updating: %v", newerDNSName, err)
+				}
 				//could have done this above but would need to hold the lock longer
 				for _, ip := range ipsToAdd {
 
@@ -798,7 +857,10 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 						ipsToRemove = append(ipsToRemove[:index], ipsToRemove[index+1:]...)
 					}
 				}
-				oc.egressfirewallDNSInfo[newerDNSName].as.DeleteIPs(ipsToRemove)
+				err = oc.egressfirewallDNSInfo[newerDNSName].as.DeleteIPs(ipsToRemove)
+				if err != nil {
+					klog.Errorf("Error removing ips for dnsName %s from addressSet as part of updating: %v", newerDNSName, err)
+				}
 				oc.egressfirewallDNSMutex.Unlock()
 
 			}
@@ -815,7 +877,10 @@ func (oc *Controller) WatchDNSObject() *factory.Handler {
 					if _, exists := oc.egressfirewallDNSInfo[dnsName]; exists {
 						delete(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr], dnsObject.Name)
 						if len(oc.egressfirewallDNSInfo[dnsName].ipNodes[ipAddr]) == 0 {
-							oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
+							err := oc.egressfirewallDNSInfo[dnsName].as.DeleteIPs([]net.IP{net.ParseIP(ipAddr)})
+							if err != nil {
+								klog.Errorf("Error removing ips for dnsName %s from addressSet as part of deletion: %v", dnsName, err)
+							}
 							delete(oc.egressfirewallDNSInfo[dnsName].ipNodes, ipAddr)
 						}
 					}

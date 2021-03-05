@@ -1137,7 +1137,6 @@ var _ = Describe("Watch Factory Operations", func() {
 			UpdateFunc: func(old, new interface{}) {
 				newDNSObject := new.(*dnsobject.DNSObject)
 				Expect(reflect.DeepEqual(newDNSObject, added)).To(BeTrue())
-				Expect(newDNSObject.Spec.DNSObjectEntries["www.test.com"].Namespaces).To(Equal([]string{"test"}))
 
 			},
 			DeleteFunc: func(obj interface{}) {
@@ -1150,7 +1149,6 @@ var _ = Describe("Watch Factory Operations", func() {
 		dnsObjectWatch.Add(added)
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.DNSObjectEntries["www.test.com"] = dnsobject.DNSObjectEntry{
-			Namespaces:  []string{"test"},
 			IPAddresses: []string{"1.1.1.1"},
 		}
 		dnsObjectWatch.Modify(added)

@@ -246,11 +246,10 @@ func NewNodeWatchFactory(ovnClientset *util.OVNClientset, nodeName string) (*Wat
 	if err != nil {
 		return nil, err
 	}
-	//err = wf.InitializeEgressFirewallWatchFactory()
 	if err != nil {
 		return nil, err
 	}
-	wf.informers[crdType], err = newInformer(crdType, wf.crdFactory.Apiextensions().V1beta1().CustomResourceDefinitions().Informer())
+	wf.informers[crdType], err = newInformer(crdType, wf.crdFactory.Apiextensions().V1().CustomResourceDefinitions().Informer())
 	if err != nil {
 		return nil, err
 	}
@@ -609,7 +608,6 @@ func (wf *WatchFactory) GetNamespaces() ([]*kapi.Namespace, error) {
 	return namespaceLister.List(labels.Everything())
 }
 
-//KEYWORD: LOOK INTO THIS
 func (wf *WatchFactory) GetCRDS() ([]*apiextensionsapi.CustomResourceDefinition, error) {
 	crdLister := wf.informers[crdType].lister.(apiextensionslister.CustomResourceDefinitionLister)
 	return crdLister.List(labels.Everything())

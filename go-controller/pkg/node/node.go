@@ -15,8 +15,6 @@ import (
 	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	egressfirewalldns "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/egressfirewall_dns"
 
-	//dnsobjectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/dnsobject/v1"
-
 	honode "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -26,39 +24,41 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	kapi "k8s.io/api/core/v1"
-	//errors "k8s.io/apimachinery/pkg/api/errors"
-	//metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiextension "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	//"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 )
 
 const (
-	egressFirewallDNSDefaultDuration = 30 * time.Minute
+	egressFirewallDNSDefaultDuration        = 30 * time.Minute
+	egressfirewallCRD                string = "egressfirewalls.k8s.ovn.org"
+	dnsObjectCRD                     string = "dnsobjects.k8s.ovn.org"
 )
 
 // OvnNode is the object holder for utilities meant for node management
 type OvnNode struct {
-	name              string
-	Kube              kube.Interface
-	watchFactory      factory.NodeWatchFactory
-	egressFirewallDNS *egressfirewalldns.EgressDNS
-	dnsNameNamespaces map[string]map[string]struct{}
-	stopChan          chan struct{}
-	recorder          record.EventRecorder
-	gateway           Gateway
+	name                  string
+	Kube                  kube.Interface
+	watchFactory          factory.NodeWatchFactory
+	egressfirewallEnabled bool
+	egressFirewallDNS     *egressfirewalldns.EgressDNS
+	egressFirewallHandler *factory.Handler
+	stopChan              chan struct{}
+	recorder              record.EventRecorder
+	gateway               Gateway
 }
 
 // NewNode creates a new controller for node management
 func NewNode(ovnClientset *util.OVNClientset, wf factory.NodeWatchFactory, name string, stopChan chan struct{}, eventRecorder record.EventRecorder) *OvnNode {
 	return &OvnNode{
-		name:         name,
-		Kube:         &kube.Kube{KClient: ovnClientset.KubeClient, DNSObjectClient: ovnClientset.DNSObjectClient},
-		watchFactory: wf,
-		stopChan:     stopChan,
-		recorder:     eventRecorder,
+		name:                  name,
+		Kube:                  &kube.Kube{KClient: ovnClientset.KubeClient, DNSObjectClient: ovnClientset.DNSObjectClient},
+		egressfirewallEnabled: false,
+		watchFactory:          wf,
+		stopChan:              stopChan,
+		recorder:              eventRecorder,
 	}
 }
 
@@ -197,17 +197,6 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 		return err
 	}
 
-	_, eferr := n.watchFactory.GetCRD("egressfirewalls.k8s.ovn.org")
-	_, dnsOerr := n.watchFactory.GetCRD("dnsobjects.k8s.ovn.org")
-	if eferr == nil && dnsOerr == nil {
-		klog.Infof("This node is configured with egressfirewall enabled")
-		n.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(n.name, n.watchFactory, n.Kube, make(chan struct{}))
-		if err != nil {
-			return fmt.Errorf("egressfirewall could not start properly on %s", n.name)
-		}
-		n.egressFirewallDNS.Run(egressFirewallDNSDefaultDuration)
-	}
-
 	// First wait for the node logical switch to be created by the Master, timeout is 300s.
 	err = wait.PollImmediate(500*time.Millisecond, 300*time.Second, func() (bool, error) {
 		if node, err = n.Kube.GetNode(n.name); err != nil {
@@ -295,9 +284,8 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 		}
 	}
 
-	n.watchFactory.InitializeEgressFirewallWatchFactory()
+	n.WatchCRD()
 	n.WatchEndpoints()
-	n.WatchEgressFirewalls()
 
 	cniServer := cni.NewCNIServer("", n.watchFactory)
 	err = cniServer.Start(cni.HandleCNIRequest)
@@ -305,9 +293,93 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 	return err
 }
 
-//KEYWORD: TODO (jtanenba) should I be watching CRDS Watching DNSObjects to reconcile?
-func (n *OvnNode) WatchEgressFirewalls() {
-	n.watchFactory.AddEgressFirewallHandler(cache.ResourceEventHandlerFuncs{
+func (n *OvnNode) WatchCRD() {
+	n.watchFactory.AddCRDHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			crd := obj.(*apiextension.CustomResourceDefinition)
+			klog.Infof("Adding CRD %s to cluster", crd.Name)
+			// currrently the only reason we watch crds is to determine if the watchers for egressfirewall
+			// should be running
+			if n.egressfirewallEnabled {
+				return
+			}
+			existingCRDs, err := n.watchFactory.GetCRDS()
+			if err != nil {
+				klog.Errorf("Error getting CRDs in the cluster: %v", err)
+				return
+			}
+			isEgressFirewallCRD := false
+			isDNSObjectCRD := false
+			for _, existingCRD := range existingCRDs {
+				if existingCRD.Name == egressfirewallCRD ||
+					crd.Name == egressfirewallCRD {
+					isEgressFirewallCRD = true
+				}
+				if existingCRD.Name == dnsObjectCRD ||
+					crd.Name == dnsObjectCRD {
+					isDNSObjectCRD = true
+				}
+				if isDNSObjectCRD && isEgressFirewallCRD {
+					err := n.watchFactory.InitializeEgressFirewallWatchFactory()
+					if err != nil {
+						klog.Errorf("Error Creating EgressFirewallWatchFactory: %v", err)
+						return
+					}
+					klog.Infof("Enabling EgressFirewall")
+					n.egressfirewallEnabled = true
+					n.egressFirewallHandler = n.WatchEgressFirewall()
+					n.egressFirewallDNS, err = egressfirewalldns.NewEgressDNS(n.name, n.watchFactory, n.Kube, make(chan struct{}))
+					if err != nil {
+						klog.Errorf("egressfirewall could not start properly on %s", n.name)
+						return
+					}
+					n.egressFirewallDNS.Run(egressFirewallDNSDefaultDuration)
+					return
+				}
+			}
+
+		},
+		UpdateFunc: func(old, newer interface{}) {},
+		DeleteFunc: func(obj interface{}) {
+			crd := obj.(*apiextension.CustomResourceDefinition)
+			klog.Infof("Deleting CRD %s from cluster", crd.Name)
+			// if the egressFirewall is already shutdown we don't care about other crds
+			if !n.egressfirewallEnabled {
+				return
+			}
+
+			existingCRDs, err := n.watchFactory.GetCRDS()
+			if err != nil {
+				klog.Errorf("Error getting CRDs in the cluster: %v", err)
+				return
+			}
+			isEgressFirewallCRD := false
+			isDNSObjectCRD := false
+			for _, existingCRD := range existingCRDs {
+				if existingCRD.Name == egressfirewallCRD ||
+					crd.Name == egressfirewallCRD {
+					isEgressFirewallCRD = true
+				}
+				if existingCRD.Name == dnsObjectCRD ||
+					crd.Name == dnsObjectCRD {
+					isDNSObjectCRD = true
+				}
+				if !isDNSObjectCRD || !isEgressFirewallCRD {
+					klog.Infof("Disabling EgressFirewall")
+					n.egressfirewallEnabled = false
+					n.watchFactory.RemoveEgressFirewallHandler(n.egressFirewallHandler)
+					n.egressFirewallHandler = nil
+					n.egressFirewallDNS.Shutdown()
+					return
+				}
+			}
+		},
+	}, nil)
+
+}
+
+func (n *OvnNode) WatchEgressFirewall() *factory.Handler {
+	return n.watchFactory.AddEgressFirewallHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			// grab just the DNSNames from the egressFirewall (and namespace)
 			egressFirewall := obj.(*egressfirewall.EgressFirewall)
@@ -318,11 +390,12 @@ func (n *OvnNode) WatchEgressFirewalls() {
 				//we only care if there are DNSNames associated with the egressFirewall Rule
 				if len(rule.To.DNSName) > 0 {
 					dnsNames = append(dnsNames, rule.To.DNSName)
-
 				}
 			}
-			n.egressFirewallDNS.Add(dnsNames, egressFirewall.Namespace)
-
+			err := n.egressFirewallDNS.Add(dnsNames, egressFirewall.Namespace)
+			if err != nil {
+				klog.Errorf("Error adding DNS names from egressfirewall %s in namespace %s to dns resolver: %v", egressFirewall.Name, egressFirewall.Namespace, err)
+			}
 		},
 		UpdateFunc: func(old, newer interface{}) {
 			// What can happen on an update?
@@ -345,7 +418,9 @@ func (n *OvnNode) WatchEgressFirewalls() {
 			}
 			// get all the dnsNames from the old version of the egressfirewall
 			for _, rule := range olderEgressFirewall.Spec.Egress {
-				olderDNSNames[rule.To.DNSName] = struct{}{}
+				if len(rule.To.DNSName) > 0 {
+					olderDNSNames[rule.To.DNSName] = struct{}{}
+				}
 			}
 			// to the node the only thing that matters is the presence of the dnsName in order to resolve, unlike on the master the order does not matter
 			// shortcut in case something else changes on the egressFirewall besides the dnsNames
@@ -367,8 +442,14 @@ func (n *OvnNode) WatchEgressFirewalls() {
 					dnsNamesToRemove = append(dnsNamesToRemove, oldDNSName)
 				}
 			}
-			n.egressFirewallDNS.Add(dnsNamesToAdd, newerEgressFirewall.Namespace)
-			n.egressFirewallDNS.Remove(dnsNamesToRemove, newerEgressFirewall.Namespace)
+			err := n.egressFirewallDNS.Add(dnsNamesToAdd, newerEgressFirewall.Namespace)
+			if err != nil {
+				klog.Errorf("Error adding DNS names from egressfirewall %s in namespace %s to dns resolver as part of on update: %v", newerEgressFirewall.Name, newerEgressFirewall.Namespace, err)
+			}
+			err = n.egressFirewallDNS.Remove(dnsNamesToRemove, newerEgressFirewall.Namespace)
+			if err != nil {
+				klog.Errorf("Error removing DNS names from egressfirewall %s in namespace %s to dns resolver as part of on update: %v", newerEgressFirewall.Name, newerEgressFirewall.Namespace, err)
+			}
 
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -380,7 +461,10 @@ func (n *OvnNode) WatchEgressFirewalls() {
 					dnsNames = append(dnsNames, rule.To.DNSName)
 				}
 			}
-			n.egressFirewallDNS.Remove(dnsNames, egressFirewall.Namespace)
+			err := n.egressFirewallDNS.Remove(dnsNames, egressFirewall.Namespace)
+			if err != nil {
+				klog.Errorf("Error removing DNS names from egressfirewall %s in namespace %s to dns resolver as part of on update: %v", egressFirewall.Name, egressFirewall.Namespace, err)
+			}
 
 		},
 	}, nil)
