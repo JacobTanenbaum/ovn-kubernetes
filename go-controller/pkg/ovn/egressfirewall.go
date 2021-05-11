@@ -10,6 +10,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -223,12 +224,7 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 		return addErrors
 	}
 
-	if nsInfo.addressSet == nil {
-		// TODO(trozet): remove dependency on nsInfo object and just determine hash names to create Egress FW with
-		return fmt.Errorf("unable to add egress firewall, namespace: %s has no address set", egressFirewall.Namespace)
-	}
-
-	ipv4HashedAS, ipv6HashedAS := nsInfo.addressSet.GetASHashNames()
+	ipv4HashedAS, ipv6HashedAS := addressset.MakeAddressSetHashNames(egressFirewall.Namespace)
 	err = oc.addEgressFirewallRules(ipv4HashedAS, ipv6HashedAS, egressFirewall.Namespace, egressFirewallStartPriorityInt)
 	if err != nil {
 		return err
@@ -239,18 +235,12 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 
 func (oc *Controller) updateEgressFirewall(oldEgressFirewall, newEgressFirewall *egressfirewallapi.EgressFirewall) error {
 	// block all external traffic in this namespace
-	nsInfo, err := oc.waitForNamespaceLocked(newEgressFirewall.Namespace)
-	if err != nil {
-		return fmt.Errorf("cannot update egressfirewall in %s:%v", newEgressFirewall.Namespace, err)
-	}
-	addressSet := nsInfo.addressSet
-	nsInfo.Unlock()
 	priority, err := strconv.Atoi(types.EgressFirewallStartPriority)
 	if err != nil {
 		return fmt.Errorf("cannot update egressfirewall in %s:%v", newEgressFirewall.Namespace, err)
 	}
 
-	ipv4ASHashName, ipv6ASHashName := addressSet.GetASHashNames()
+	ipv4ASHashName, ipv6ASHashName := addressset.MakeAddressSetHashNames(newEgressFirewall.Namespace)
 	match := generateMatch(ipv4ASHashName, ipv6ASHashName, []matchTarget{
 		{matchKindV4CIDR, "0.0.0.0/0"},
 		{matchKindV6CIDR, "::/0"},
