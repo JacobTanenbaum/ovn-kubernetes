@@ -7,10 +7,14 @@ import (
 	"time"
 
 	goovn "github.com/ebay/go-ovn"
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/ipallocator"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/libovsdbops"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	kapi "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -123,9 +127,18 @@ func (oc *Controller) deleteLogicalPort(pod *kapi.Pod) {
 		klog.Errorf(err.Error())
 	}
 
-	err = util.OvnNBLSPDel(oc.ovnNBClient, logicalPort)
+	//err = util.OvnNBLSPDel(oc.ovnNBClient, logicalPort)
+	//if err != nil {
+	//	klog.Errorf(err.Error())
+	//}
+	lsp := &nbdb.LogicalSwitchPort{Name: logicalPort}
+	ops, err := oc.nbClient.Where(lsp).Delete()
 	if err != nil {
-		klog.Errorf(err.Error())
+		klog.Errorf("failed createing ops to delete logical port for pod %s (%v)", pod.Name, err)
+	}
+	_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
+	if err != nil {
+		klog.Errorf("failed deleting logical port for pod %s (%v)", pod.Name, err)
 	}
 
 	if err := oc.lsManager.ReleaseIPs(portInfo.logicalSwitch, portInfo.ips); err != nil {
@@ -285,7 +298,8 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 
 	var podMac net.HardwareAddr
 	var podIfAddrs []*net.IPNet
-	var cmds []*goovn.OvnCommand
+	//var cmds []*goovn.OvnCommand
+	var allOps []ovsdb.Operation
 	var addresses []string
 	var cmd *goovn.OvnCommand
 	var releaseIPs bool
@@ -295,38 +309,42 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 	// does don't re-add the port to OVN as this will change its
 	// UUID and and the port cache, address sets, and port groups
 	// will still have the old UUID.
-	lsp, err := oc.ovnNBClient.LSPGet(portName)
-	if err != nil && err != goovn.ErrorNotFound && err != goovn.ErrorSchema {
+	lsp := &nbdb.LogicalSwitchPort{Name: portName}
+	err = oc.nbClient.Get(lsp)
+	if err != nil && err != libovsdbclient.ErrNotFound {
 		return fmt.Errorf("unable to get the lsp: %s from the nbdb: %s", portName, err)
 	}
 
-	if lsp == nil {
-		cmd, err = oc.ovnNBClient.LSPAdd(logicalSwitch, portName)
-		if err != nil {
-			return fmt.Errorf("unable to create the LSPAdd command for port: %s from the nbdb: %v", portName, err)
-		}
-		cmds = append(cmds, cmd)
-	} else {
-		klog.Infof("LSP already exists for port: %s", portName)
-	}
+	//if lsp == nil {
+	//cmd, err = oc.ovnNBClient.LSPAdd(logicalSwitch, portName)
+	//if err != nil {
+	//	return fmt.Errorf("unable to create the LSPAdd command for port: %s from the nbdb: %v", portName, err)
+	//}
+	//cmds = append(cmds, cmd)
+	//} else {
+	//	klog.Infof("LSP already exists for port: %s", portName)
+	//}
 
 	// Bind the port to the node's chassis; prevents ping-ponging between
 	// chassis if ovnkube-node isn't running correctly and hasn't cleared
 	// out iface-id for an old instance of this pod, and the pod got
 	// rescheduled.
-	opts, err := oc.ovnNBClient.LSPGetOptions(portName)
-	if err != nil && err != goovn.ErrorNotFound {
-		klog.Warningf("Failed to get options for port %s: %v", portName, err)
+	//opts, err := oc.ovnNBClient.LSPGetOptions(portName)
+	//if err != nil && err != goovn.ErrorNotFound {
+	//	klog.Warningf("Failed to get options for port %s: %v", portName, err)
+	//}
+	//if opts == nil {
+	//	opts = make(map[string]string)
+	//}
+	if lsp.Options == nil {
+		lsp.Options = make(map[string]string)
 	}
-	if opts == nil {
-		opts = make(map[string]string)
-	}
-	opts["requested-chassis"] = pod.Spec.NodeName
-	cmd, err = oc.ovnNBClient.LSPSetOptions(portName, opts)
-	if err != nil {
-		return fmt.Errorf("unable to create the LSPSetOptions command for port: %s from the nbdb: %v", portName, err)
-	}
-	cmds = append(cmds, cmd)
+	lsp.Options["requested-chassis"] = pod.Spec.NodeName
+	//cmd, err = oc.ovnNBClient.LSPSetOptions(portName, opts)
+	//	if err != nil {
+	//		return fmt.Errorf("unable to create the LSPSetOptions command for port: %s from the nbdb: %v", portName, err)
+	//	}
+	//	cmds = append(cmds, cmd)
 
 	annotation, err := util.UnmarshalPodAnnotation(pod.Annotations)
 
@@ -355,11 +373,12 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 
 		// If the pod already has annotations use the existing static
 		// IP/MAC from the annotation.
-		cmd, err = oc.ovnNBClient.LSPSetDynamicAddresses(portName, "")
-		if err != nil {
-			return fmt.Errorf("unable to create LSPSetDynamicAddresses command for port: %s", portName)
-		}
-		cmds = append(cmds, cmd)
+		//	cmd, err = oc.ovnNBClient.LSPSetDynamicAddresses(portName, "")
+		//	if err != nil {
+		//		return fmt.Errorf("unable to create LSPSetDynamicAddresses command for port: %s", portName)
+		//	}
+		//	cmds = append(cmds, cmd)
+		lsp.DynamicAddresses = []string{}
 
 		// ensure we have reserved the IPs in the annotation
 		if err = oc.lsManager.AllocateIPs(logicalSwitch, podIfAddrs); err != nil && err != ipallocator.ErrAllocated {
@@ -453,31 +472,56 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 		addresses[idx+1] = podIfAddr.IP.String()
 	}
 	// LSP addresses in OVN are a single space-separated value
-	cmd, err = oc.ovnNBClient.LSPSetAddress(portName, strings.Join(addresses, " "))
-	if err != nil {
-		return fmt.Errorf("unable to create LSPSetAddress command for port: %s", portName)
-	}
-	cmds = append(cmds, cmd)
+	//cmd, err = oc.ovnNBClient.LSPSetAddress(portName, strings.Join(addresses, " "))
+	//if err != nil {
+	//	return fmt.Errorf("unable to create LSPSetAddress command for port: %s", portName)
+	//}
+	//cmds = append(cmds, cmd)
+	lsp.Addresses = addresses
 
 	// add external ids
 	extIds := map[string]string{"namespace": pod.Namespace, "pod": "true"}
-	cmd, err = oc.ovnNBClient.LSPSetExternalIds(portName, extIds)
-	if err != nil {
-		return fmt.Errorf("unable to create LSPSetExternalIds command for port: %s", portName)
-	}
-	cmds = append(cmds, cmd)
+	//cmd, err = oc.ovnNBClient.LSPSetExternalIds(portName, extIds)
+	//if err != nil {
+	//	return fmt.Errorf("unable to create LSPSetExternalIds command for port: %s", portName)
+	//}
+	//cmds = append(cmds, cmd)
+	lsp.ExternalIDs = extIds
 
 	// execute all the commands together.
-	err = oc.ovnNBClient.Execute(cmds...)
-	if err != nil {
-		return fmt.Errorf("error while creating logical port %s error: %v",
-			portName, err)
+	//err = oc.ovnNBClient.Execute(cmds...)
+	//if err != nil {
+	//	return fmt.Errorf("error while creating logical port %s error: %v",
+	//		portName, err)
+	//}
+	if len(lsp.UUID) == 0 {
+		// create new logical switch port
+		allOps, err = oc.nbClient.Create(lsp)
+		if err != nil {
+			return err
+		}
+	} else {
+		//update Existing logical switch port
+		ops, err := oc.nbClient.Where(lsp).Update(lsp, lsp.Addresses)
+		allOps = append(allOps, ops...)
+		ops, err = oc.nbClient.Where(lsp).Update(lsp, lsp.ExternalIDs)
+		allOps = append(allOps, ops...)
+		ops, err = oc.nbClient.Where(lsp).Update(lsp, lsp.DynamicAddresses)
+		allOps = append(allOps, ops...)
+		ops, err = oc.nbClient.Where(lsp).Update(lsp, lsp.Options)
+		allOps = append(allOps, ops...)
+		if err != nil {
+			return fmt.Errorf("KEYWORD")
+		}
 	}
 
-	lsp, err = oc.ovnNBClient.LSPGet(portName)
-	if err != nil || lsp == nil {
-		return fmt.Errorf("failed to get the logical switch port: %s from the ovn client, error: %s", portName, err)
-	}
+	_, err = libovsdbops.TransactAndCheck(oc.nbClient, allOps)
+
+	//lsp, err = oc.ovnNBClient.LSPGet(portName)
+	//if err != nil || lsp == nil {
+	//	return fmt.Errorf("failed to get the logical switch port: %s from the ovn client, error: %s", portName, err)
+	//}
+	err = oc.nbClient.Get(lsp)
 
 	// Add the pod's logical switch port to the port cache
 	portInfo := oc.logicalPortCache.add(logicalSwitch, portName, lsp.UUID, podMac, podIfAddrs)

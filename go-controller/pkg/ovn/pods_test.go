@@ -11,7 +11,9 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	v1 "k8s.io/api/core/v1"
@@ -260,7 +262,8 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 
 				t.baseCmds(fExec)
 
-				fakeOvn.start(ctx,
+				dbSetup := libovsdbtest.TestSetup{}
+				fakeOvn.startWithDBSetup(ctx, dbSetup,
 					&v1.NamespaceList{
 						Items: []v1.Namespace{
 							namespaceT,
@@ -282,6 +285,17 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(fExec.CalledMatchesExpected).Should(gomega.BeTrue(), fExec.ErrorDesc)
 
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(&nbdb.LogicalSwitchPort{
+					Name:      "namespace1_myPod",
+					Addresses: []string{"0a:58:0a:80:01:03", "10.128.1.3"},
+					ExternalIDs: map[string]string{
+						"pod":       "true",
+						"namespace": "namespace1",
+					},
+					Options: map[string]string{
+						"requested-chassis": "node1",
+					},
+				}))
 				gomega.Eventually(func() string { return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t.namespace, t.podName) }, 2).Should(gomega.MatchJSON(`{"default": {"ip_addresses":["` + t.podIP + `/24"], "mac_address":"` + t.podMAC + `", "gateway_ips": ["` + t.nodeGWIP + `"], "ip_address":"` + t.podIP + `/24", "gateway_ip": "` + t.nodeGWIP + `"}}`))
 
 				return nil
@@ -307,7 +321,8 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					namespaceT.Name,
 				)
 
-				fakeOvn.start(ctx,
+				dbSetup := libovsdbtest.TestSetup{}
+				fakeOvn.startWithDBSetup(ctx, dbSetup,
 					&v1.NamespaceList{
 						Items: []v1.Namespace{
 							namespaceT,
@@ -325,6 +340,17 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				fakeOvn.controller.WatchNamespaces()
 				fakeOvn.controller.WatchPods()
 
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(&nbdb.LogicalSwitchPort{
+					Name:      "namespace1_myPod",
+					Addresses: []string{"0a:58:0a:80:01:03", "10.128.1.3"},
+					ExternalIDs: map[string]string{
+						"pod":       "true",
+						"namespace": "namespace1",
+					},
+					Options: map[string]string{
+						"requested-chassis": "node1",
+					},
+				}))
 				gomega.Eventually(func() string { return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t.namespace, t.podName) }, 2).Should(gomega.MatchJSON(`{"default": {"ip_addresses":["` + t.podIP + `/24"], "mac_address":"` + t.podMAC + `", "gateway_ips": ["` + t.nodeGWIP + `"], "ip_address":"` + t.podIP + `/24", "gateway_ip": "` + t.nodeGWIP + `"}}`))
 				gomega.Eventually(fExec.CalledMatchesExpected).Should(gomega.BeTrue(), fExec.ErrorDesc)
 
@@ -335,6 +361,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Get(context.TODO(), t.podName, metav1.GetOptions{})
 				gomega.Expect(err).To(gomega.HaveOccurred())
 				gomega.Expect(pod).To(gomega.BeNil())
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs([]libovsdbtest.TestData{}))
 
 				return nil
 			}
@@ -381,6 +408,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				fakeOvn.controller.WatchPods()
 				gomega.Expect(fExec.CalledMatchesExpected()).To(gomega.BeTrue(), fExec.ErrorDesc)
 				// allow pod retry from update annotation to fail
+
 				time.Sleep(2 * time.Second)
 				mockDelNBDBError(ovntest.LogicalSwitchPortType, t.portName,
 					ovntest.LogicalSwitchPortExternalId,
