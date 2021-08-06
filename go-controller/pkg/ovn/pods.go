@@ -3,10 +3,9 @@ package ovn
 import (
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
-	goovn "github.com/ebay/go-ovn"
+	//	goovn "github.com/ebay/go-ovn"
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -301,7 +300,7 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 	//var cmds []*goovn.OvnCommand
 	var allOps []ovsdb.Operation
 	var addresses []string
-	var cmd *goovn.OvnCommand
+	//var cmd *goovn.OvnCommand
 	var releaseIPs bool
 	needsIP := true
 
@@ -569,15 +568,24 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 	}
 
 	// CNI depends on the flows from port security, delay setting it until end
-	cmd, err = oc.ovnNBClient.LSPSetPortSecurity(portName, strings.Join(addresses, " "))
-	if err != nil {
-		return fmt.Errorf("unable to create LSPSetPortSecurity command for port: %s", portName)
-	}
+	//cmd, err = oc.ovnNBClient.LSPSetPortSecurity(portName, strings.Join(addresses, " "))
+	//if err != nil {
+	//	return fmt.Errorf("unable to create LSPSetPortSecurity command for port: %s", portName)
+	//}
 
-	err = oc.ovnNBClient.Execute(cmd)
+	//err = oc.ovnNBClient.Execute(cmd)
+	//if err != nil {
+	//	return fmt.Errorf("error while setting port security on port: %s error: %v",
+	//		portName, err)
+	//}
+	lsp.PortSecurity = addresses
+	ops, err := oc.nbClient.Where(lsp).Update(lsp, &lsp.PortSecurity)
 	if err != nil {
-		return fmt.Errorf("error while setting port security on port: %s error: %v",
-			portName, err)
+		return fmt.Errorf("Cannot create ops for setting port secuity on port %s (%v)", portName, err)
+	}
+	_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
+	if err != nil {
+		return fmt.Errorf("error while setting port security on port: %s (%v)", portName, err)
 	}
 
 	// observe the pod creation latency metric.
