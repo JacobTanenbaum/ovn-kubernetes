@@ -191,6 +191,7 @@ func (oc *DefaultNetworkController) addNode(node *kapi.Node) ([]*net.IPNet, erro
 	// We expect one subnet per configured ClusterNetwork IP family.
 	var haveV4, haveV6 bool
 	for _, net := range hostSubnets {
+		fmt.Printf("KEYWORD: %+v\n", net)
 		if !haveV4 {
 			haveV4 = net.IP.To4() != nil
 		}

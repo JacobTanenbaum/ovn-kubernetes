@@ -1679,6 +1679,16 @@ func (e *egressIPZoneController) deleteExternalGWPodSNATOps(ops []ovsdb.Operatio
 		if err != nil {
 			return nil, err
 		}
+		/*
+			matchingPodIPs := util.MatchAllIPNetFamily(
+				utilnet.IsIPv6String(status.EgressIP),
+				podIPs,
+			)
+		*/
+		////////////////		ops, err = deletePodSNATOps(e.nbClient, ops, e.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, matchingPodIPs)
+		fmt.Printf("KEYWORD: %s\n", status.EgressIP)
+		fmt.Printf("KEYWORD: %+v\n", podIPs)
+		fmt.Printf("KEYWORD extIPs: %+v\n", extIPs)
 		ops, err = deletePodSNATOps(e.nbClient, ops, e.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, podIPs)
 		if err != nil {
 			return nil, err

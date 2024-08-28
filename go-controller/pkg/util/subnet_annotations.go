@@ -169,6 +169,8 @@ func DeleteNodeHostSubnetAnnotation(nodeAnnotator kube.Annotator) {
 // on a node and returns the host subnet for the given network.
 func ParseNodeHostSubnetAnnotation(node *kapi.Node, netName string) ([]*net.IPNet, error) {
 	subnetsMap, err := parseSubnetAnnotation(node.Annotations, ovnNodeSubnets)
+	fmt.Printf("KEYWORD: node.Annotations: %+v\n", node.Annotations)
+	fmt.Printf("KEYWORD: subnetsMap %+v\n", subnetsMap)
 	if err != nil {
 		return nil, err
 	}

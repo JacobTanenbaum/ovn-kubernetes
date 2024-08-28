@@ -1033,6 +1033,7 @@ func GetRouterNATs(nbClient libovsdbclient.Client, router *nbdb.LogicalRouter) (
 
 	nats := []*nbdb.NAT{}
 	for _, uuid := range r.Nat {
+		fmt.Printf("KEYWORD: UUID - %s\n", uuid)
 		nat, err := GetNAT(nbClient, &nbdb.NAT{UUID: uuid})
 		if errors.Is(err, libovsdbclient.ErrNotFound) {
 			continue
@@ -1040,6 +1041,7 @@ func GetRouterNATs(nbClient libovsdbclient.Client, router *nbdb.LogicalRouter) (
 		if err != nil {
 			return nil, fmt.Errorf("failed to lookup NAT entry with uuid: %s, error: %w", uuid, err)
 		}
+		fmt.Printf("KEYWORD: %+v\n", nat)
 		nats = append(nats, nat)
 	}
 
@@ -1116,6 +1118,7 @@ func DeleteNATsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, rou
 	opModels := make([]operationModel, 0, len(routerNats)+1)
 	for _, routerNat := range routerNats {
 		for _, inputNat := range nats {
+			fmt.Printf("KEYWORD: *******\n%+v\n%+v\n", inputNat, routerNat)
 			if isEquivalentNAT(routerNat, inputNat) {
 				router.Nat = append(router.Nat, routerNat.UUID)
 				opModel := operationModel{
@@ -1129,6 +1132,7 @@ func DeleteNATsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, rou
 		}
 	}
 	if len(router.Nat) == 0 {
+		fmt.Printf("KEYWORD: router.Nat == 0\n")
 		return ops, nil
 	}
 	opModel := operationModel{

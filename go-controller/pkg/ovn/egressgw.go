@@ -631,13 +631,19 @@ func getExternalIPsGR(watchFactory *factory.WatchFactory, nodeName string) ([]*n
 // deletePodSNATOps creates ovsdb operation that removes per pod SNAT rules towards the nodeIP that are applied to the GR where the pod resides
 // used when disableSNATMultipleGWs=true
 func deletePodSNATOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, gwRouterName string, extIPs, podIPNets []*net.IPNet) ([]ovsdb.Operation, error) {
+	fmt.Printf("KEYWORD: HERE\n")
 	nats, err := buildPodSNAT(extIPs, podIPNets)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("KEYWORD: nats - %+v\n", nats)
+	for _, nat := range nats {
+		fmt.Printf("KEYWORD: %+v\n", nat)
+	}
 	logicalRouter := nbdb.LogicalRouter{
 		Name: gwRouterName,
 	}
+	fmt.Printf("KEYWORD: %s\n", gwRouterName)
 	ops, err = libovsdbops.DeleteNATsOps(nbClient, ops, &logicalRouter, nats...)
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 		return nil, fmt.Errorf("failed create operation for deleting SNAT rule for pod on gateway router %s: %v", logicalRouter.Name, err)
